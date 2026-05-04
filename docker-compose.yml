@@ -1,0 +1,51 @@
+version: '3.9'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder   # Use 'production' for prod deployments
+    container_name: mtd-api
+    ports:
+      - '3500:3500'
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src   # Hot-reload in dev (remove in prod)
+    command: npm run start:dev
+    networks:
+      - mtd-network
+
+  db:
+    image: mysql:8.4
+    container_name: mtd-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: mtd_db
+      MYSQL_USER: mtd_user
+      MYSQL_PASSWORD: mtd_password
+    ports:
+      - '3306:3306'
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'mtd_user', '-pmtd_password']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mtd-network
+
+volumes:
+  mysql_data:
+
+networks:
+  mtd-network:
+    driver: bridge
