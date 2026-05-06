@@ -10,6 +10,7 @@ import databaseConfig, { typeOrmConfig } from './config/database.config';
 import authConfig from './config/auth.config';
 import { envValidationSchema } from './config/env.validation';
 import { HealthModule } from './modules/health/health.module';
+import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { HealthModule } from './modules/health/health.module';
     }),
 
     HealthModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [

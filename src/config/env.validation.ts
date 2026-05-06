@@ -23,9 +23,9 @@ export const envValidationSchema = Joi.object({
   // Security
   BCRYPT_ROUNDS: Joi.number().min(10).max(14).default(12),
 
-  // Auth — TODO (auth phase): make JWT_SECRET required once auth module is built
-  JWT_SECRET: Joi.string().optional(),
+  // Auth — JWT (required: auth module is now active)
+  JWT_SECRET: Joi.string().min(16).required(),
   JWT_EXPIRES_IN: Joi.string().default('1d'),
-  REFRESH_TOKEN_SECRET: Joi.string().optional(),
+  REFRESH_TOKEN_SECRET: Joi.string().min(16).required(),
   REFRESH_TOKEN_EXPIRES_IN: Joi.string().default('7d'),
 });
