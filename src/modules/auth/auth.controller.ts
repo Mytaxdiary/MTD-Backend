@@ -168,9 +168,18 @@ export class AuthController {
 
   private setAuthCookies(res: Response, accessToken: string, refreshToken: string): void {
     const isProd = this.configService.get<string>('app.env') === 'production';
-    const base = { httpOnly: true, secure: isProd, sameSite: 'lax' as const, path: '/' };
-    res.cookie(ACCESS_COOKIE, accessToken, { ...base, maxAge: ONE_DAY_MS });
-    res.cookie(REFRESH_COOKIE, refreshToken, { ...base, maxAge: SEVEN_DAYS_MS });
+    
+    console.log('Setting cookies with config:', { isProd, secure: isProd });
+    
+    const cookieOptions = {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? ('none' as const) : ('lax' as const),
+      path: '/',
+    };
+    
+    res.cookie(ACCESS_COOKIE, accessToken, { ...cookieOptions, maxAge: ONE_DAY_MS });
+    res.cookie(REFRESH_COOKIE, refreshToken, { ...cookieOptions, maxAge: SEVEN_DAYS_MS });
   }
 
   private clearAuthCookies(res: Response): void {
