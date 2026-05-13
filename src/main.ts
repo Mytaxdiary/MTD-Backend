@@ -22,7 +22,7 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
   const port = configService.get<number>('app.port') ?? 3500;
-  const frontendUrl = configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+  const frontendUrl = configService.get<string>('app.frontendUrl');
   const nodeEnv = configService.get<string>('app.env') ?? 'development';
 
   // Cookie parsing (required for httpOnly cookie-based auth)
