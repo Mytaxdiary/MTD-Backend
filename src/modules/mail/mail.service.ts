@@ -17,7 +17,7 @@ export class MailService {
     const host = configService.get<string>('mail.host');
     const fromEmail = configService.get<string>('mail.from') ?? 'noreply@mtditsa.co.uk';
     const fromName = configService.get<string>('mail.fromName') ?? 'NewEffect MTD ITSA';
-    const frontendUrl = configService.get<string>('app.frontendUrl');
+    const frontendUrl = configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
 
     this.from = `"${fromName}" <${fromEmail}>`;
     this.loginUrl = `${frontendUrl}/login`;
