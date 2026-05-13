@@ -1,37 +1,85 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as nodemailer from 'nodemailer';
+import type { Transporter } from 'nodemailer';
+import { passwordResetTemplate } from './templates/password-reset.template';
+import { emailVerificationTemplate } from './templates/email-verification.template';
+import { welcomeTemplate } from './templates/welcome.template';
 
-/**
- * Mail service stub — logs email actions to console in development.
- *
- * In the mail integration phase, replace the stub body with a real provider
- * (e.g. Nodemailer, Resend, SendGrid) and load HTML templates from
- * src/modules/mail/templates/.
- */
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
+  private transporter: Transporter | null = null;
+  private readonly from: string;
+  private readonly loginUrl: string;
 
-  /**
-   * Sends a password reset email containing the reset link.
-   * TODO (mail phase): replace stub with real provider send.
-   */
-  async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
-    this.logger.log(`[MAIL STUB] Password reset email → ${to}`);
-    this.logger.log(`[MAIL STUB] Reset URL: ${resetUrl}`);
-    // TODO (mail phase):
-    // await this.mailer.sendMail({
-    //   to,
-    //   subject: 'Reset your MTD ITSA password',
-    //   html: renderTemplate('password-reset', { resetUrl }),
-    // });
+  constructor(private readonly configService: ConfigService) {
+    const host = configService.get<string>('mail.host');
+    const fromEmail = configService.get<string>('mail.from') ?? 'noreply@mtditsa.co.uk';
+    const fromName = configService.get<string>('mail.fromName') ?? 'NewEffect MTD ITSA';
+    const frontendUrl = configService.get<string>('app.frontendUrl');
+
+    this.from = `"${fromName}" <${fromEmail}>`;
+    this.loginUrl = `${frontendUrl}/login`;
+
+    if (host) {
+      this.transporter = nodemailer.createTransport({
+        host,
+        port: configService.get<number>('mail.port') ?? 587,
+        secure: configService.get<boolean>('mail.secure') ?? false,
+        auth: {
+          user: configService.get<string>('mail.user'),
+          pass: configService.get<string>('mail.pass'),
+        },
+      });
+      this.logger.log(`Mail transport configured via ${host}`);
+    } else {
+      this.logger.warn('MAIL_HOST not set — email will be logged to console only');
+    }
   }
 
-  /**
-   * Sends a welcome email after successful registration.
-   * TODO (mail phase): replace stub with real provider send.
-   */
+  async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
+    await this.send(
+      to,
+      'Reset your MTD ITSA password',
+      passwordResetTemplate(resetUrl),
+      `Reset your password (valid 1 hour):\n\n${resetUrl}\n\nIf you did not request this, ignore this email.`,
+    );
+  }
+
+  async sendEmailVerificationEmail(to: string, verifyUrl: string): Promise<void> {
+    await this.send(
+      to,
+      'Verify your MTD ITSA email address',
+      emailVerificationTemplate(verifyUrl),
+      `Verify your email (valid 24 hours):\n\n${verifyUrl}\n\nIf you did not create an account, ignore this email.`,
+    );
+  }
+
   async sendWelcomeEmail(to: string, firstName: string): Promise<void> {
-    this.logger.log(`[MAIL STUB] Welcome email → ${to} (${firstName})`);
-    // TODO (mail phase): implement welcome email template and send
+    await this.send(
+      to,
+      'Welcome to NewEffect MTD ITSA',
+      welcomeTemplate(firstName, this.loginUrl),
+      `Hi ${firstName},\n\nYour NewEffect MTD ITSA account is ready. Sign in at:\n${this.loginUrl}\n\nThe NewEffect team`,
+    );
+  }
+
+  // ── Private helpers ──────────────────────────────────────────────────────
+
+  private async send(to: string, subject: string, html: string, text: string): Promise<void> {
+    if (!this.transporter) {
+      this.logger.log(`[MAIL STUB] To: ${to} | Subject: ${subject}`);
+      this.logger.log(`[MAIL STUB] ${text.split('\n')[0]}`);
+      return;
+    }
+
+    try {
+      await this.transporter.sendMail({ from: this.from, to, subject, html, text });
+      this.logger.log(`Email sent → ${to} (${subject})`);
+    } catch (error) {
+      this.logger.error(`Failed to send email to ${to}`, error);
+      throw error;
+    }
   }
 }

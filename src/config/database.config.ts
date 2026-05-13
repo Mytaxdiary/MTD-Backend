@@ -27,7 +27,7 @@ export const typeOrmConfig = (): TypeOrmModuleOptions => ({
   migrations: [join(__dirname, '../database/migrations/*{.ts,.js}')],
   autoLoadEntities: true,
   synchronize: false,
-  logging: process.env.NODE_ENV === 'development',
+  logging: ['error'],
   retryAttempts: 3,
   retryDelay: 3000,
 });

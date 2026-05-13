@@ -3,11 +3,15 @@ import {
   Post,
   Get,
   Body,
+  Query,
   UseGuards,
   Request,
+  Res,
   HttpCode,
   HttpStatus,
+  UnauthorizedException,
 } from '@nestjs/common';
+import type { Response, Request as ExpressRequest } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -17,41 +21,67 @@ import {
   ApiUnauthorizedResponse,
   ApiConflictResponse,
   ApiBadRequestResponse,
+  ApiQuery,
 } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
-import { RefreshTokenDto, LogoutDto } from './dto/refresh-token.dto';
+import { LogoutDto } from './dto/refresh-token.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { RequestUser } from './strategies/jwt.strategy';
 
-interface AuthRequest extends Request {
+interface AuthRequest extends ExpressRequest {
   user: RequestUser;
 }
+
+const ACCESS_COOKIE = 'mtd_at';
+const REFRESH_COOKIE = 'mtd_rt';
+const ONE_DAY_MS = 86_400_000;
+const SEVEN_DAYS_MS = 604_800_000;
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  // ── Register ─────────────────────────────────────────────────────────────
 
   @Post('register')
   @ApiOperation({ summary: 'Register a new agent account' })
-  @ApiCreatedResponse({ description: 'Account created — returns tokens and user profile' })
+  @ApiCreatedResponse({ description: 'Account created — tokens set as httpOnly cookies' })
   @ApiConflictResponse({ description: 'Email address is already registered' })
-  register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
+  async register(
+    @Body() dto: RegisterDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.register(dto);
+    this.setAuthCookies(res, result.accessToken, result.refreshToken);
+    return result;
   }
+
+  // ── Login ─────────────────────────────────────────────────────────────────
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Sign in and receive access + refresh tokens' })
-  @ApiOkResponse({ description: 'Returns tokens and user profile' })
+  @ApiOperation({ summary: 'Sign in and receive tokens via httpOnly cookies' })
+  @ApiOkResponse({ description: 'Tokens set as httpOnly cookies; user profile returned' })
   @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  async login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.login(dto);
+    this.setAuthCookies(res, result.accessToken, result.refreshToken);
+    return result;
   }
+
+  // ── Forgot password ───────────────────────────────────────────────────────
 
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
@@ -66,6 +96,8 @@ export class AuthController {
     return { message: 'If this email is registered, a reset link has been sent.' };
   }
 
+  // ── Reset password ────────────────────────────────────────────────────────
+
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reset password using token from the email link' })
@@ -75,6 +107,8 @@ export class AuthController {
     await this.authService.resetPassword(dto.token, dto.password);
     return { message: 'Password has been reset successfully.' };
   }
+
+  // ── Profile ───────────────────────────────────────────────────────────────
 
   @Get('profile')
   @UseGuards(JwtAuthGuard)
@@ -86,26 +120,71 @@ export class AuthController {
     return this.authService.getProfile(req.user.userId);
   }
 
+  // ── Refresh ───────────────────────────────────────────────────────────────
+
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Exchange a valid refresh token for new tokens' })
-  @ApiOkResponse({ description: 'Returns new access + refresh tokens' })
-  @ApiUnauthorizedResponse({ description: 'Refresh token is invalid or expired' })
-  refresh(@Body() dto: RefreshTokenDto) {
-    return this.authService.refreshTokens(dto.refreshToken);
+  @ApiOperation({
+    summary: 'Silent token refresh — reads refresh token from httpOnly cookie',
+  })
+  @ApiOkResponse({ description: 'New tokens issued; cookies updated' })
+  @ApiUnauthorizedResponse({ description: 'Refresh token is missing, invalid, or expired' })
+  async refresh(
+    @Request() req: ExpressRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const rawRefreshToken = (req.cookies as Record<string, string>)?.[REFRESH_COOKIE];
+    if (!rawRefreshToken) {
+      throw new UnauthorizedException('No refresh token');
+    }
+    const result = await this.authService.refreshTokens(rawRefreshToken);
+    this.setAuthCookies(res, result.accessToken, result.refreshToken);
+    return result;
   }
+
+  // ── Logout ────────────────────────────────────────────────────────────────
 
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('access-token')
-  @ApiOperation({
-    summary: 'Log out — revokes the current refresh token',
-    description: 'Pass refreshToken in body to revoke a specific token, or omit to revoke all.',
-  })
+  @ApiOperation({ summary: 'Log out — revokes refresh token and clears cookies' })
   @ApiOkResponse({ description: 'Logged out successfully' })
-  async logout(@Request() req: AuthRequest, @Body() dto: LogoutDto) {
-    await this.authService.logout(req.user.userId, dto.refreshToken);
+  async logout(
+    @Request() req: AuthRequest,
+    @Body() dto: LogoutDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const cookieRefreshToken = (req.cookies as Record<string, string>)?.[REFRESH_COOKIE];
+    await this.authService.logout(req.user.userId, cookieRefreshToken ?? dto.refreshToken);
+    this.clearAuthCookies(res);
     return { message: 'Logged out successfully.' };
+  }
+
+  // ── Email verification ────────────────────────────────────────────────────
+
+  @Get('verify-email')
+  @ApiOperation({ summary: 'Verify email address using token from the verification email' })
+  @ApiQuery({ name: 'token', required: true, description: 'Email verification token' })
+  @ApiOkResponse({ description: 'Email verified successfully' })
+  @ApiBadRequestResponse({ description: 'Token is invalid, expired, or already used' })
+  async verifyEmail(@Query('token') token: string) {
+    await this.authService.verifyEmail(token);
+    return { message: 'Email verified successfully.' };
+  }
+
+  // ── Private helpers ───────────────────────────────────────────────────────
+
+  private setAuthCookies(res: Response, accessToken: string, refreshToken: string): void {
+    const isProd = this.configService.get<string>('app.env') === 'production';
+    const base = { httpOnly: true, secure: isProd, sameSite: 'lax' as const, path: '/' };
+    res.cookie(ACCESS_COOKIE, accessToken, { ...base, maxAge: ONE_DAY_MS });
+    res.cookie(REFRESH_COOKIE, refreshToken, { ...base, maxAge: SEVEN_DAYS_MS });
+  }
+
+  private clearAuthCookies(res: Response): void {
+    const opts = { httpOnly: true, path: '/' };
+    res.clearCookie(ACCESS_COOKIE, opts);
+    res.clearCookie(REFRESH_COOKIE, opts);
   }
 }

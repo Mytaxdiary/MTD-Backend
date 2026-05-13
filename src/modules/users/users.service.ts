@@ -48,6 +48,15 @@ export class UsersService {
     await this.userRepo.update(id, { passwordHash });
   }
 
+  async markEmailVerified(id: string): Promise<void> {
+    await this.userRepo.update(id, { isEmailVerified: true });
+  }
+
+  /** Permanently removes the user row (and cascade-deletes all related tokens). */
+  async hardDelete(id: string): Promise<void> {
+    await this.userRepo.delete(id);
+  }
+
   /**
    * Finds the Agent role, creating it if it does not yet exist.
    * This is the only role supported in this phase.

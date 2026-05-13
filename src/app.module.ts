@@ -9,6 +9,7 @@ import { AppService } from './app.service';
 import appConfig from './config/app.config';
 import databaseConfig, { typeOrmConfig } from './config/database.config';
 import authConfig from './config/auth.config';
+import mailConfig from './config/mail.config';
 import { envValidationSchema } from './config/env.validation';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -18,7 +19,7 @@ import { AuthModule } from './modules/auth/auth.module';
     // Global config — load all namespaces and validate env on startup
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, authConfig],
+      load: [appConfig, databaseConfig, authConfig, mailConfig],
       validationSchema: envValidationSchema,
       validationOptions: {
         allowUnknown: true,

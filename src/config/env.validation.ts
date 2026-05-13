@@ -23,6 +23,15 @@ export const envValidationSchema = Joi.object({
   // Security
   BCRYPT_ROUNDS: Joi.number().min(10).max(14).default(12),
 
+  // Mail / SMTP (optional — falls back to console logging if not set)
+  MAIL_HOST: Joi.string().optional(),
+  MAIL_PORT: Joi.number().default(587),
+  MAIL_SECURE: Joi.boolean().default(false),
+  MAIL_USER: Joi.string().optional(),
+  MAIL_PASS: Joi.string().optional(),
+  MAIL_FROM: Joi.string().email().optional(),
+  MAIL_FROM_NAME: Joi.string().optional(),
+
   // Auth — JWT (required: auth module is now active)
   JWT_SECRET: Joi.string().min(16).required(),
   JWT_EXPIRES_IN: Joi.string().default('1d'),

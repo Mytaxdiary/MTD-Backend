@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -13,6 +14,7 @@ import { UsersService } from '../users/users.service';
 import { MailService } from '../mail/mail.service';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { PasswordResetToken } from './entities/password-reset-token.entity';
+import { EmailVerificationToken } from './entities/email-verification-token.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { hashPassword, comparePassword } from '../../common/helpers/crypto.helper';
@@ -21,9 +23,12 @@ import type { AuthResponse, TokensResponse } from './types/auth-response.type';
 import type { JwtPayload } from './strategies/jwt.strategy';
 
 const RESET_TOKEN_EXPIRY_HOURS = 1;
+const VERIFY_TOKEN_EXPIRY_HOURS = 24;
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
@@ -33,6 +38,8 @@ export class AuthService {
     private readonly refreshTokenRepo: Repository<RefreshToken>,
     @InjectRepository(PasswordResetToken)
     private readonly passwordResetTokenRepo: Repository<PasswordResetToken>,
+    @InjectRepository(EmailVerificationToken)
+    private readonly emailVerificationTokenRepo: Repository<EmailVerificationToken>,
   ) {}
 
   // ── Register ────────────────────────────────────────────────────────────
@@ -57,8 +64,13 @@ export class AuthService {
 
     const tokens = await this.issueTokens(user.id, user.email);
 
-    // Fire-and-forget welcome email stub
-    void this.mailService.sendWelcomeEmail(user.email, user.firstName);
+    // Fire-and-forget: welcome email + email verification link
+    this.mailService
+      .sendWelcomeEmail(user.email, user.firstName)
+      .catch((err: unknown) => this.logger.error('Failed to send welcome email', err));
+    this.sendVerificationEmail(user.id, user.email).catch((err: unknown) =>
+      this.logger.error('Failed to send verification email', err),
+    );
 
     return {
       ...tokens,
@@ -67,6 +79,7 @@ export class AuthService {
         name: `${user.firstName} ${user.lastName}`,
         email: user.email,
         firmName: user.firmName,
+        isEmailVerified: user.isEmailVerified,
       },
     };
   }
@@ -93,6 +106,7 @@ export class AuthService {
         name: `${user.firstName} ${user.lastName}`,
         email: user.email,
         firmName: user.firmName,
+        isEmailVerified: user.isEmailVerified,
       },
     };
   }
@@ -171,6 +185,7 @@ export class AuthService {
       name: `${user.firstName} ${user.lastName}`,
       email: user.email,
       firmName: user.firmName,
+      isEmailVerified: user.isEmailVerified,
     };
   }
 
@@ -207,6 +222,57 @@ export class AuthService {
         { isRevoked: true },
       );
     }
+  }
+
+  // ── Email verification ────────────────────────────────────────────────────
+
+  async sendVerificationEmail(userId: string, email: string): Promise<void> {
+    // Invalidate any existing unused verification tokens for this user
+    await this.emailVerificationTokenRepo.update(
+      { user: { id: userId }, isUsed: false },
+      { isUsed: true },
+    );
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + VERIFY_TOKEN_EXPIRY_HOURS);
+
+    const verifyToken = this.emailVerificationTokenRepo.create({
+      user: { id: userId } as User,
+      tokenHash,
+      expiresAt,
+      isUsed: false,
+    });
+    await this.emailVerificationTokenRepo.save(verifyToken);
+
+    const frontendUrl =
+      this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+    const verifyUrl = `${frontendUrl}/verify-email?token=${rawToken}`;
+
+    await this.mailService.sendEmailVerificationEmail(email, verifyUrl);
+  }
+
+  async verifyEmail(rawToken: string): Promise<void> {
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+    const verifyToken = await this.emailVerificationTokenRepo.findOne({
+      where: { tokenHash, isUsed: false },
+      relations: ['user'],
+    });
+
+    if (!verifyToken || verifyToken.expiresAt < new Date()) {
+      throw new BadRequestException(
+        'Invalid or expired verification link. Please request a new one.',
+      );
+    }
+
+    // Mark token as used
+    await this.emailVerificationTokenRepo.update(verifyToken.id, { isUsed: true });
+
+    // Mark the user's email as verified
+    await this.usersService.markEmailVerified(verifyToken.user.id);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────

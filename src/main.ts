@@ -3,6 +3,7 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
+import * as cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
@@ -22,6 +23,9 @@ async function bootstrap() {
   const port = configService.get<number>('app.port') ?? 3500;
   const frontendUrl = configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
   const nodeEnv = configService.get<string>('app.env') ?? 'development';
+
+  // Cookie parsing (required for httpOnly cookie-based auth)
+  app.use(cookieParser());
 
   // Security
   app.use(helmet());

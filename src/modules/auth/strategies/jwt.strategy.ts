@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
+import type { Request } from 'express';
 
 export interface JwtPayload {
   /** Subject — userId (UUID) */
@@ -16,13 +17,21 @@ export interface RequestUser {
   email: string;
 }
 
+/** Cookie name shared with the frontend tokenStorage constants. */
+const ACCESS_COOKIE = 'mtd_at';
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(configService: ConfigService) {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      // Try httpOnly cookie first, fall back to Authorization: Bearer header
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        (req: Request) => (req?.cookies as Record<string, string>)?.[ACCESS_COOKIE] ?? null,
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ]),
       ignoreExpiration: false,
       secretOrKey: configService.get<string>('auth.jwtSecret') ?? 'dev-fallback-secret',
+      passReqToCallback: false,
     });
   }
 

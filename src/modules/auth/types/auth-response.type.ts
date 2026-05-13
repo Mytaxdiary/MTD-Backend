@@ -11,6 +11,7 @@ export interface AuthUserResponse {
   email: string;
   /** Maps from practiceName sent at registration */
   firmName: string;
+  isEmailVerified: boolean;
 }
 
 export interface AuthResponse {
