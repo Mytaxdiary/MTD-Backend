@@ -3,7 +3,8 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
-import * as cookieParser from 'cookie-parser';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const cookieParser = require('cookie-parser');
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
@@ -65,10 +66,7 @@ async function bootstrap() {
       .setTitle(SWAGGER_TITLE)
       .setDescription(SWAGGER_DESCRIPTION)
       .setVersion(SWAGGER_VERSION)
-      .addBearerAuth(
-        { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
-        'access-token',
-      )
+      .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'access-token')
       .build();
 
     const document = SwaggerModule.createDocument(app, swaggerConfig);

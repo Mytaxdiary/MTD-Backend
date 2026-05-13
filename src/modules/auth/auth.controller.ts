@@ -56,10 +56,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Register a new agent account' })
   @ApiCreatedResponse({ description: 'Account created — tokens set as httpOnly cookies' })
   @ApiConflictResponse({ description: 'Email address is already registered' })
-  async register(
-    @Body() dto: RegisterDto,
-    @Res({ passthrough: true }) res: Response,
-  ) {
+  async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) res: Response) {
     const result = await this.authService.register(dto);
     this.setAuthCookies(res, result.accessToken, result.refreshToken);
     return result;
@@ -72,10 +69,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Sign in and receive tokens via httpOnly cookies' })
   @ApiOkResponse({ description: 'Tokens set as httpOnly cookies; user profile returned' })
   @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
-  async login(
-    @Body() dto: LoginDto,
-    @Res({ passthrough: true }) res: Response,
-  ) {
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
     const result = await this.authService.login(dto);
     this.setAuthCookies(res, result.accessToken, result.refreshToken);
     return result;
@@ -129,10 +123,7 @@ export class AuthController {
   })
   @ApiOkResponse({ description: 'New tokens issued; cookies updated' })
   @ApiUnauthorizedResponse({ description: 'Refresh token is missing, invalid, or expired' })
-  async refresh(
-    @Request() req: ExpressRequest,
-    @Res({ passthrough: true }) res: Response,
-  ) {
+  async refresh(@Request() req: ExpressRequest, @Res({ passthrough: true }) res: Response) {
     const rawRefreshToken = (req.cookies as Record<string, string>)?.[REFRESH_COOKIE];
     if (!rawRefreshToken) {
       throw new UnauthorizedException('No refresh token');

@@ -8,7 +8,13 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiTags, ApiOperation, ApiParam, ApiOkResponse, ApiForbiddenResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiParam,
+  ApiOkResponse,
+  ApiForbiddenResponse,
+} from '@nestjs/swagger';
 import { UsersService } from './users.service';
 
 @ApiTags('Users')

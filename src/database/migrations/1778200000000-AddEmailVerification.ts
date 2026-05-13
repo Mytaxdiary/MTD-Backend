@@ -5,9 +5,7 @@ export class AddEmailVerification1778200000000 implements MigrationInterface {
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Drop if it was created incorrectly in a previous run (wrong column names)
-    await queryRunner.query(
-      `DROP TABLE IF EXISTS \`email_verification_tokens\``,
-    );
+    await queryRunner.query(`DROP TABLE IF EXISTS \`email_verification_tokens\``);
 
     await queryRunner.query(`
       CREATE TABLE \`email_verification_tokens\` (
