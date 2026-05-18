@@ -114,6 +114,15 @@ export class AuthService {
     await this.usersService.updateLastLogin(user.id);
     const tokens = await this.issueTokens(user.id, user.email, user.tenantId ?? '');
 
+    // If email not verified, silently resend verification email so user isn't stuck
+    if (!user.isEmailVerified) {
+      try {
+        await this.sendVerificationEmail(user.id, user.email);
+      } catch (err: unknown) {
+        this.logger.error('Failed to resend verification email on login', err);
+      }
+    }
+
     return {
       ...tokens,
       user: {
