@@ -1,9 +1,7 @@
-import { Controller, Get, Query, UseGuards, Request } from '@nestjs/common';
-import { ApiOperation, ApiTags, ApiOkResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
-import type { Request as ExpressRequest } from 'express';
+import { Controller, Get, Query } from '@nestjs/common';
+import { ApiOperation, ApiTags, ApiOkResponse, ApiQuery } from '@nestjs/swagger';
 import { HealthService } from './health.service';
 import { MailService } from '../mail/mail.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
 
 @ApiTags('Health')
@@ -44,20 +42,14 @@ export class HealthController {
    * Use: GET /health/mail?to=you@example.com
    */
   @Get('mail')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth('access-token')
   @ApiOperation({ summary: '[DEBUG] Check mail config and optionally send a test email' })
   @ApiQuery({ name: 'to', required: false, description: 'Send a test email to this address' })
-  async checkMail(
-    @Query('to') to: string | undefined,
-    @Request() req: ExpressRequest,
-  ) {
+  async checkMail(@Query('to') to: string | undefined) {
     const nodeEnv = this.configService.get<string>('app.env');
     const mailHost = this.configService.get<string>('mail.host');
     const mailUser = this.configService.get<string>('mail.user');
     const mailFrom = this.configService.get<string>('mail.from');
     const frontendUrl = this.configService.get<string>('app.frontendUrl');
-    const user = req.user as { email?: string };
 
     const config = {
       nodeEnv,
@@ -82,7 +74,6 @@ export class HealthController {
 
     return {
       config,
-      requestedBy: user?.email ?? 'unknown',
       testEmail: to ? testEmailResult : 'Pass ?to=email to send a test email',
     };
   }
