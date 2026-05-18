@@ -11,12 +11,14 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { PasswordResetToken } from './entities/password-reset-token.entity';
 import { EmailVerificationToken } from './entities/email-verification-token.entity';
+import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
+import { TenantsModule } from '../tenants/tenants.module';
 import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([RefreshToken, PasswordResetToken, EmailVerificationToken]),
+    TypeOrmModule.forFeature([RefreshToken, PasswordResetToken, EmailVerificationToken, User]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -30,6 +32,7 @@ import { MailModule } from '../mail/mail.module';
       }),
     }),
     UsersModule,
+    TenantsModule,
     MailModule,
   ],
   controllers: [AuthController],

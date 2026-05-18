@@ -1,10 +1,12 @@
 import { Column, Entity, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '../../../database/base.entity';
 import { Role } from './role.entity';
+import { Tenant } from '../../tenants/entities/tenant.entity';
 
 /**
  * Users table — stores agent/accountant accounts.
  * firm_name maps to the frontend 'practiceName' field sent during registration.
+ * Every user belongs to exactly one tenant (accounting firm).
  */
 @Entity('users')
 export class User extends BaseEntity {
@@ -35,4 +37,12 @@ export class User extends BaseEntity {
   @ManyToOne(() => Role, { eager: true, nullable: true })
   @JoinColumn({ name: 'role_id' })
   role?: Role;
+
+  /** Every user belongs to one tenant (accounting firm). */
+  @ManyToOne(() => Tenant, { eager: false, nullable: true })
+  @JoinColumn({ name: 'tenant_id' })
+  tenant?: Tenant;
+
+  @Column({ name: 'tenant_id', type: 'varchar', length: 36, nullable: true })
+  tenantId?: string;
 }

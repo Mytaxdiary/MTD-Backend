@@ -11,6 +11,7 @@ import {
   HttpStatus,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Response, Request as ExpressRequest } from 'express';
 import {
   ApiTags,
@@ -53,6 +54,7 @@ export class AuthController {
   // ── Register ─────────────────────────────────────────────────────────────
 
   @Post('register')
+  @Throttle({ auth: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Register a new agent account' })
   @ApiCreatedResponse({ description: 'Account created — tokens set as httpOnly cookies' })
   @ApiConflictResponse({ description: 'Email address is already registered' })
@@ -65,6 +67,7 @@ export class AuthController {
   // ── Login ─────────────────────────────────────────────────────────────────
 
   @Post('login')
+  @Throttle({ auth: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Sign in and receive tokens via httpOnly cookies' })
   @ApiOkResponse({ description: 'Tokens set as httpOnly cookies; user profile returned' })
@@ -78,6 +81,7 @@ export class AuthController {
   // ── Forgot password ───────────────────────────────────────────────────────
 
   @Post('forgot-password')
+  @Throttle({ auth: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Request a password reset email',

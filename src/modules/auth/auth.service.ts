@@ -11,6 +11,7 @@ import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { UsersService } from '../users/users.service';
+import { TenantsService } from '../tenants/tenants.service';
 import { MailService } from '../mail/mail.service';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { PasswordResetToken } from './entities/password-reset-token.entity';
@@ -31,6 +32,7 @@ export class AuthService {
 
   constructor(
     private readonly usersService: UsersService,
+    private readonly tenantsService: TenantsService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
@@ -53,6 +55,13 @@ export class AuthService {
     const passwordHash = await hashPassword(dto.password);
     const role = await this.usersService.findOrCreateAgentRole();
 
+    // Each registration creates a new tenant (accounting firm)
+    // Pre-fill contact info from the registering user so Firm Details isn't blank
+    const tenant = await this.tenantsService.create(dto.practiceName, {
+      contactName: `${dto.firstName} ${dto.lastName}`.trim(),
+      contactEmail: dto.email.toLowerCase(),
+    });
+
     const user = await this.usersService.create({
       firstName: dto.firstName,
       lastName: dto.lastName,
@@ -60,9 +69,10 @@ export class AuthService {
       email: dto.email.toLowerCase(),
       passwordHash,
       role,
+      tenantId: tenant.id,
     });
 
-    const tokens = await this.issueTokens(user.id, user.email);
+    const tokens = await this.issueTokens(user.id, user.email, tenant.id);
 
     // Fire-and-forget: welcome email + email verification link
     this.mailService
@@ -80,6 +90,7 @@ export class AuthService {
         email: user.email,
         firmName: user.firmName,
         isEmailVerified: user.isEmailVerified,
+        tenantId: tenant.id,
       },
     };
   }
@@ -97,7 +108,7 @@ export class AuthService {
     if (!passwordMatch) throw invalidCredentials;
 
     await this.usersService.updateLastLogin(user.id);
-    const tokens = await this.issueTokens(user.id, user.email);
+    const tokens = await this.issueTokens(user.id, user.email, user.tenantId ?? '');
 
     return {
       ...tokens,
@@ -107,6 +118,7 @@ export class AuthService {
         email: user.email,
         firmName: user.firmName,
         isEmailVerified: user.isEmailVerified,
+        tenantId: user.tenantId ?? null,
       },
     };
   }
@@ -186,6 +198,7 @@ export class AuthService {
       email: user.email,
       firmName: user.firmName,
       isEmailVerified: user.isEmailVerified,
+      tenantId: user.tenantId ?? null,
     };
   }
 
@@ -206,7 +219,7 @@ export class AuthService {
     // Revoke used token immediately (rotation)
     await this.refreshTokenRepo.update(stored.id, { isRevoked: true });
 
-    return this.issueTokens(stored.user.id, stored.user.email);
+    return this.issueTokens(stored.user.id, stored.user.email, stored.user.tenantId ?? '');
   }
 
   // ── Logout ───────────────────────────────────────────────────────────────
@@ -277,8 +290,8 @@ export class AuthService {
 
   // ── Private helpers ──────────────────────────────────────────────────────
 
-  private async issueTokens(userId: string, email: string): Promise<TokensResponse> {
-    const payload: JwtPayload = { sub: userId, email };
+  private async issueTokens(userId: string, email: string, tenantId: string): Promise<TokensResponse> {
+    const payload: JwtPayload = { sub: userId, email, tenantId };
     const accessToken = this.jwtService.sign(payload);
 
     const rawRefreshToken = crypto.randomBytes(40).toString('hex');

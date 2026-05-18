@@ -13,6 +13,7 @@ import mailConfig from './config/mail.config';
 import { envValidationSchema } from './config/env.validation';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { TenantsModule } from './modules/tenants/tenants.module';
 
 @Module({
   imports: [
@@ -33,14 +34,24 @@ import { AuthModule } from './modules/auth/auth.module';
     }),
 
     // Rate limiting — applied globally via APP_GUARD below
+    // 'default': 100 req/min for all routes
+    // 'auth': 10 req/min override for sensitive auth endpoints
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => [
-        {
-          ttl: config.get<number>('app.throttleTtl', 60) * 1000,
-          limit: config.get<number>('app.throttleLimit', 100),
-        },
-      ],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [
+          {
+            name: 'default',
+            ttl: config.get<number>('app.throttleTtl', 60) * 1000,
+            limit: config.get<number>('app.throttleLimit', 100),
+          },
+          {
+            name: 'auth',
+            ttl: 60_000,
+            limit: 10,
+          },
+        ],
+      }),
     }),
 
     // Cron jobs — required before any module that uses @Cron()
@@ -48,6 +59,7 @@ import { AuthModule } from './modules/auth/auth.module';
 
     HealthModule,
     AuthModule,
+    TenantsModule,
   ],
   controllers: [AppController],
   providers: [

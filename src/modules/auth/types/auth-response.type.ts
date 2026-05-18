@@ -12,6 +12,7 @@ export interface AuthUserResponse {
   /** Maps from practiceName sent at registration */
   firmName: string;
   isEmailVerified: boolean;
+  tenantId: string | null;
 }
 
 export interface AuthResponse {

@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
+import { Tenant } from '../tenants/entities/tenant.entity';
 
 const AGENT_ROLE = 'Agent';
 
@@ -13,6 +14,8 @@ export class UsersService {
     private readonly userRepo: Repository<User>,
     @InjectRepository(Role)
     private readonly roleRepo: Repository<Role>,
+    @InjectRepository(Tenant)
+    private readonly tenantRepo: Repository<Tenant>,
   ) {}
 
   async findByEmail(email: string): Promise<User | null> {
@@ -35,6 +38,7 @@ export class UsersService {
     email: string;
     passwordHash: string;
     role: Role;
+    tenantId: string;
   }): Promise<User> {
     const user = this.userRepo.create(data);
     return this.userRepo.save(user);
@@ -52,9 +56,14 @@ export class UsersService {
     await this.userRepo.update(id, { isEmailVerified: true });
   }
 
-  /** Permanently removes the user row (and cascade-deletes all related tokens). */
+  /** Permanently removes the user + their tenant (and cascade-deletes all related tokens). */
   async hardDelete(id: string): Promise<void> {
+    const user = await this.userRepo.findOne({ where: { id } });
+    const tenantId = user?.tenantId;
     await this.userRepo.delete(id);
+    if (tenantId) {
+      await this.tenantRepo.delete(tenantId);
+    }
   }
 
   /**

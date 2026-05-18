@@ -32,8 +32,12 @@ async function bootstrap() {
   app.use(helmet());
 
   // CORS
+  const allowedOrigins = nodeEnv === 'production'
+    ? [frontendUrl].filter(Boolean)
+    : true;
+
   app.enableCors({
-    origin: nodeEnv === 'production' ? frontendUrl : true,
+    origin: allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
