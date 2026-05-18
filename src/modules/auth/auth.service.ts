@@ -74,13 +74,17 @@ export class AuthService {
 
     const tokens = await this.issueTokens(user.id, user.email, tenant.id);
 
-    // Fire-and-forget: welcome email + email verification link
-    this.mailService
-      .sendWelcomeEmail(user.email, user.firstName)
-      .catch((err: unknown) => this.logger.error('Failed to send welcome email', err));
-    this.sendVerificationEmail(user.id, user.email).catch((err: unknown) =>
-      this.logger.error('Failed to send verification email', err),
-    );
+    // Send emails before returning — fire-and-forget fails on serverless (Vercel)
+    try {
+      await this.mailService.sendWelcomeEmail(user.email, user.firstName);
+    } catch (err: unknown) {
+      this.logger.error('Failed to send welcome email', err);
+    }
+    try {
+      await this.sendVerificationEmail(user.id, user.email);
+    } catch (err: unknown) {
+      this.logger.error('Failed to send verification email', err);
+    }
 
     return {
       ...tokens,
