@@ -14,13 +14,15 @@ import { envValidationSchema } from './config/env.validation';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
+import { HmrcModule } from './modules/hmrc/hmrc.module';
+import hmrcConfig from './config/hmrc.config';
 
 @Module({
   imports: [
     // Global config — load all namespaces and validate env on startup
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, authConfig, mailConfig],
+      load: [appConfig, databaseConfig, authConfig, mailConfig, hmrcConfig],
       validationSchema: envValidationSchema,
       validationOptions: {
         allowUnknown: true,
@@ -60,6 +62,7 @@ import { TenantsModule } from './modules/tenants/tenants.module';
     HealthModule,
     AuthModule,
     TenantsModule,
+    HmrcModule,
   ],
   controllers: [AppController],
   providers: [

@@ -32,6 +32,16 @@ export const envValidationSchema = Joi.object({
   MAIL_FROM: Joi.string().email().optional(),
   MAIL_FROM_NAME: Joi.string().optional(),
 
+  // HMRC OAuth (optional — app works without it, HMRC section just shows not-configured state)
+  HMRC_BASE_URL: Joi.string().uri().optional(),
+  HMRC_AUTH_BASE_URL: Joi.string().uri().optional(),
+  HMRC_CLIENT_ID: Joi.string().optional(),
+  HMRC_CLIENT_SECRET: Joi.string().optional(),
+  HMRC_REDIRECT_URI: Joi.string().uri().optional(),
+  HMRC_SCOPE: Joi.string().optional(),
+  // 64-char hex = 32-byte AES key. Required in production, optional in sandbox/dev.
+  HMRC_ENCRYPTION_KEY: Joi.string().length(64).optional(),
+
   // Auth — JWT (required: auth module is now active)
   JWT_SECRET: Joi.string().min(16).required(),
   JWT_EXPIRES_IN: Joi.string().default('1d'),
