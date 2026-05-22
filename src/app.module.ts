@@ -15,6 +15,7 @@ import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
 import { HmrcModule } from './modules/hmrc/hmrc.module';
+import { ClientsModule } from './modules/clients/clients.module';
 import hmrcConfig from './config/hmrc.config';
 
 @Module({
@@ -63,6 +64,7 @@ import hmrcConfig from './config/hmrc.config';
     AuthModule,
     TenantsModule,
     HmrcModule,
+    ClientsModule,
   ],
   controllers: [AppController],
   providers: [

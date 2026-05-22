@@ -34,7 +34,7 @@ export class UsersController {
   @ApiOperation({
     summary: '[DEV ONLY] Hard-delete a user by ID',
     description:
-      'Permanently removes a user and all related records (cascade). Only works outside of production. Used for testing auth flows.',
+      'Permanently removes a user (auth tokens cascade). If they are the last user on the firm, also deletes clients, HMRC connection, notification preferences, and the tenant. Dev only.',
   })
   @ApiParam({ name: 'id', description: 'User UUID' })
   @ApiOkResponse({ description: 'User deleted successfully' })

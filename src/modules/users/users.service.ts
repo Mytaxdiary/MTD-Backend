@@ -1,21 +1,26 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
 import { Tenant } from '../tenants/entities/tenant.entity';
+import { Client } from '../clients/entities/client.entity';
 
 const AGENT_ROLE = 'Agent';
 
 @Injectable()
 export class UsersService {
   constructor(
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     @InjectRepository(Role)
     private readonly roleRepo: Repository<Role>,
     @InjectRepository(Tenant)
     private readonly tenantRepo: Repository<Tenant>,
+    @InjectRepository(Client)
+    private readonly clientRepo: Repository<Client>,
   ) {}
 
   async findByEmail(email: string): Promise<User | null> {
@@ -56,14 +61,30 @@ export class UsersService {
     await this.userRepo.update(id, { isEmailVerified: true });
   }
 
-  /** Permanently removes the user + their tenant (and cascade-deletes all related tokens). */
+  /**
+   * Permanently removes the user. Auth tokens cascade on user delete.
+   * If this was the last user on the tenant, also removes clients, HMRC connection,
+   * notification preferences, and the tenant row.
+   */
   async hardDelete(id: string): Promise<void> {
     const user = await this.userRepo.findOne({ where: { id } });
-    const tenantId = user?.tenantId;
-    await this.userRepo.delete(id);
-    if (tenantId) {
-      await this.tenantRepo.delete(tenantId);
+    if (!user) {
+      throw new NotFoundException(`User ${id} not found`);
     }
+
+    const tenantId = user.tenantId;
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.delete(User, id);
+
+      if (!tenantId) return;
+
+      const remainingUsers = await manager.count(User, { where: { tenantId } });
+      if (remainingUsers > 0) return;
+
+      await manager.delete(Client, { tenantId });
+      await manager.delete(Tenant, tenantId);
+    });
   }
 
   /**

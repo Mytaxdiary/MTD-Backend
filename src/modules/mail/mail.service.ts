@@ -5,6 +5,11 @@ import type { Transporter } from 'nodemailer';
 import { passwordResetTemplate } from './templates/password-reset.template';
 import { emailVerificationTemplate } from './templates/email-verification.template';
 import { welcomeTemplate } from './templates/welcome.template';
+import {
+  clientInvitationTemplate,
+  clientInvitationPlainText,
+  type ClientInvitationEmailData,
+} from './templates/client-invitation.template';
 
 @Injectable()
 export class MailService {
@@ -62,6 +67,15 @@ export class MailService {
       'Welcome to NewEffect MTD ITSA',
       welcomeTemplate(firstName, this.loginUrl),
       `Hi ${firstName},\n\nYour NewEffect MTD ITSA account is ready. Sign in at:\n${this.loginUrl}\n\nThe NewEffect team`,
+    );
+  }
+
+  async sendClientInvitationEmail(data: ClientInvitationEmailData): Promise<void> {
+    await this.send(
+      data.to,
+      `${data.firmName} — Making Tax Digital setup`,
+      clientInvitationTemplate(data),
+      clientInvitationPlainText(data),
     );
   }
 
