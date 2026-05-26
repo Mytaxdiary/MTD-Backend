@@ -61,10 +61,7 @@ export class ClientsService {
       );
     }
 
-    const tokens = await this.hmrcService.getDecryptedTokens(tenantId);
-    if (!tokens) {
-      throw new InternalServerErrorException('Unable to retrieve HMRC tokens.');
-    }
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
 
     // 2. Get tenant info for email
     const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
@@ -109,7 +106,7 @@ export class ClientsService {
     return this.sendHmrcInvitationForClient({
       client,
       arn: connection.arn,
-      accessToken: tokens.accessToken,
+      accessToken,
       agentName,
       firmName,
       personalMessage: dto.personalMessage,
@@ -141,10 +138,7 @@ export class ClientsService {
       );
     }
 
-    const tokens = await this.hmrcService.getDecryptedTokens(tenantId);
-    if (!tokens) {
-      throw new InternalServerErrorException('Unable to retrieve HMRC tokens.');
-    }
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
 
     const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
     const firmName = tenant?.firmName ?? 'Your accountancy firm';
@@ -164,7 +158,7 @@ export class ClientsService {
     return this.sendHmrcInvitationForClient({
       client,
       arn: connection.arn,
-      accessToken: tokens.accessToken,
+      accessToken,
       agentName,
       firmName,
       personalMessage,
@@ -203,17 +197,14 @@ export class ClientsService {
       throw new BadRequestException('This invitation has already been accepted.');
     }
 
-    const tokens = await this.hmrcService.getDecryptedTokens(tenantId);
-    if (!tokens) {
-      throw new InternalServerErrorException('Unable to retrieve HMRC tokens.');
-    }
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
 
     const url = `${this.hmrcBaseUrl}/agent-authorisation-test-support/invitations/${client.invitationId}`;
 
     try {
       const res = await fetch(url, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${tokens.accessToken}` },
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (!res.ok) {
         const text = await res.text();
@@ -251,15 +242,14 @@ export class ClientsService {
       throw new BadRequestException('ARN not set — cannot check invitation status.');
     }
 
-    const tokens = await this.hmrcService.getDecryptedTokens(tenantId);
-    if (!tokens) throw new InternalServerErrorException('Unable to retrieve HMRC tokens.');
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
 
     const url = `${this.hmrcBaseUrl}/agents/${connection.arn}/invitations/${client.invitationId}`;
 
     let hmrcStatus: string;
     try {
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${tokens.accessToken}` },
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (!res.ok) {
         const text = await res.text();

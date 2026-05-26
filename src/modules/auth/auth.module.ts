@@ -27,7 +27,7 @@ import { MailModule } from '../mail/mail.module';
         secret: config.get<string>('auth.jwtSecret') ?? 'dev-fallback-secret',
         signOptions: {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          expiresIn: (config.get<string>('auth.jwtExpiresIn') ?? '1d') as any,
+          expiresIn: (config.get<string>('auth.jwtExpiresIn') ?? '15m') as any,
         },
       }),
     }),

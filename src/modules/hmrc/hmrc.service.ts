@@ -4,6 +4,7 @@ import {
   BadRequestException,
   InternalServerErrorException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -16,8 +17,13 @@ interface HmrcTokenResponse {
   token_type: string;
   expires_in: number;
   refresh_token: string;
+  /** Some HMRC responses include refresh token expiry (seconds). */
+  refresh_token_expires_in?: number;
   scope?: string;
 }
+
+/** Refresh access token if it expires within this many ms (buffer). */
+const REFRESH_BUFFER_MS = 60_000;
 
 @Injectable()
 export class HmrcService {
@@ -74,62 +80,81 @@ export class HmrcService {
 
   /** Exchanges an authorization code for tokens, encrypts them, and persists the connection. */
   async exchangeCode(tenantId: string, code: string): Promise<HmrcConnection> {
-    const baseUrl = this.configService.get<string>('hmrc.baseUrl');
-    const clientId = this.configService.get<string>('hmrc.clientId');
-    const clientSecret = this.configService.get<string>('hmrc.clientSecret');
-    const redirectUri = this.configService.get<string>('hmrc.redirectUri');
-
-    if (!clientId || !clientSecret || !redirectUri) {
-      throw new InternalServerErrorException('HMRC OAuth is not fully configured.');
-    }
-
-    const body = new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
+    const tokenData = await this.requestTokens({
       grant_type: 'authorization_code',
-      redirect_uri: redirectUri,
       code,
+      redirect_uri: this.configService.get<string>('hmrc.redirectUri') ?? '',
     });
-
-    let tokenData: HmrcTokenResponse;
-    try {
-      const response = await fetch(`${baseUrl}/oauth/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        this.logger.error(`HMRC token exchange failed: ${response.status} ${errorText}`);
-        throw new BadRequestException(`HMRC token exchange failed: ${errorText}`);
-      }
-
-      tokenData = (await response.json()) as HmrcTokenResponse;
-    } catch (err) {
-      if (err instanceof BadRequestException) throw err;
-      this.logger.error('HMRC token exchange request error', err);
-      throw new InternalServerErrorException('Failed to contact HMRC for token exchange.');
-    }
-
-    const now = new Date();
-    const accessTokenExpiresAt = new Date(now.getTime() + tokenData.expires_in * 1000);
 
     const existing = await this.connectionRepo.findOne({ where: { tenantId } });
     const connection = existing ?? this.connectionRepo.create({ tenantId });
 
-    // Encrypt tokens before persisting
-    connection.accessToken = this.encryptToken(tokenData.access_token);
-    connection.refreshToken = this.encryptToken(tokenData.refresh_token);
-    connection.accessTokenExpiresAt = accessTokenExpiresAt;
-    connection.connectedAt = now;
-    connection.status = 'connected';
-    connection.scope = tokenData.scope ?? undefined;
-
+    this.applyTokenResponse(connection, tokenData, { setConnectedAt: true });
     await this.connectionRepo.save(connection);
     this.logger.log(`HMRC connection saved for tenant ${tenantId}`);
 
     return connection;
+  }
+
+  /**
+   * Refreshes HMRC tokens using the stored refresh token.
+   * Throws UnauthorizedException when the refresh token itself is invalid/expired —
+   * caller should prompt the user to reconnect.
+   */
+  async refreshHmrcTokens(tenantId: string): Promise<HmrcConnection> {
+    const connection = await this.connectionRepo.findOne({ where: { tenantId } });
+    if (!connection) {
+      throw new NotFoundException('No HMRC connection found. Connect to HMRC first.');
+    }
+
+    const refreshToken = this.decryptToken(connection.refreshToken);
+
+    let tokenData: HmrcTokenResponse;
+    try {
+      tokenData = await this.requestTokens({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+      });
+    } catch (err) {
+      // Refresh token rejected (400/401) → connection is unusable, mark expired
+      if (err instanceof BadRequestException || err instanceof UnauthorizedException) {
+        connection.status = 'expired';
+        await this.connectionRepo.save(connection);
+        throw new UnauthorizedException(
+          'HMRC refresh token is invalid or has expired. Please reconnect HMRC in Settings.',
+        );
+      }
+      throw err;
+    }
+
+    this.applyTokenResponse(connection, tokenData, { setConnectedAt: false });
+    await this.connectionRepo.save(connection);
+    this.logger.log(`HMRC tokens refreshed for tenant ${tenantId}`);
+
+    return connection;
+  }
+
+  /**
+   * Returns a valid access token, refreshing on the fly if expired or expiring soon.
+   * Use this for every outbound HMRC API call instead of reading tokens directly.
+   */
+  async getValidAccessToken(tenantId: string): Promise<string> {
+    const connection = await this.connectionRepo.findOne({ where: { tenantId } });
+    if (!connection) {
+      throw new BadRequestException(
+        'Your firm is not connected to HMRC. Go to Settings → HMRC Connection to connect first.',
+      );
+    }
+
+    const expiresAt = connection.accessTokenExpiresAt?.getTime() ?? 0;
+    const needsRefresh = expiresAt - Date.now() < REFRESH_BUFFER_MS || connection.status !== 'connected';
+
+    if (!needsRefresh) {
+      return this.decryptToken(connection.accessToken);
+    }
+
+    const refreshed = await this.refreshHmrcTokens(tenantId);
+    return this.decryptToken(refreshed.accessToken);
   }
 
   /** Returns current HMRC connection status for a tenant (null if never connected). */
@@ -137,26 +162,20 @@ export class HmrcService {
     const connection = await this.connectionRepo.findOne({ where: { tenantId } });
     if (!connection) return null;
 
-    // Auto-mark expired if access token expiry has passed
-    if (connection.status === 'connected' && connection.accessTokenExpiresAt < new Date()) {
+    // Mark expired only when both tokens are unusable; access expiry alone is auto-refreshed
+    const accessExpired = connection.accessTokenExpiresAt
+      ? connection.accessTokenExpiresAt < new Date()
+      : true;
+    const refreshExpired = connection.refreshTokenExpiresAt
+      ? connection.refreshTokenExpiresAt < new Date()
+      : false;
+
+    if (connection.status === 'connected' && accessExpired && refreshExpired) {
       connection.status = 'expired';
       await this.connectionRepo.save(connection);
     }
 
     return connection;
-  }
-
-  /**
-   * Returns decrypted tokens for internal use (e.g. making HMRC API calls).
-   * Never expose this to the frontend.
-   */
-  async getDecryptedTokens(tenantId: string): Promise<{ accessToken: string; refreshToken: string } | null> {
-    const connection = await this.connectionRepo.findOne({ where: { tenantId } });
-    if (!connection || connection.status !== 'connected') return null;
-    return {
-      accessToken: this.decryptToken(connection.accessToken),
-      refreshToken: this.decryptToken(connection.refreshToken),
-    };
   }
 
   /** Updates only the ARN for an existing HMRC connection. */
@@ -179,5 +198,80 @@ export class HmrcService {
     }
     await this.connectionRepo.delete({ tenantId });
     this.logger.log(`HMRC connection removed for tenant ${tenantId}`);
+  }
+
+  // ─── Token request helpers ────────────────────────────────────────────────
+
+  /**
+   * Calls HMRC POST /oauth/token. Used for both `authorization_code` (initial exchange)
+   * and `refresh_token` grants — same endpoint, different body.
+   */
+  private async requestTokens(
+    extraParams: Record<string, string>,
+  ): Promise<HmrcTokenResponse> {
+    const baseUrl = this.configService.get<string>('hmrc.baseUrl');
+    const clientId = this.configService.get<string>('hmrc.clientId');
+    const clientSecret = this.configService.get<string>('hmrc.clientSecret');
+
+    if (!baseUrl || !clientId || !clientSecret) {
+      throw new InternalServerErrorException('HMRC OAuth is not fully configured.');
+    }
+
+    const body = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      ...extraParams,
+    });
+
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}/oauth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+    } catch (err) {
+      this.logger.error('HMRC token request network error', err);
+      throw new InternalServerErrorException('Failed to contact HMRC for token request.');
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      this.logger.error(
+        `HMRC token request failed (${extraParams.grant_type}): ${response.status} ${errorText}`,
+      );
+      // 400/401 typically mean the supplied code/refresh token is invalid
+      if (response.status === 400 || response.status === 401) {
+        throw new BadRequestException(`HMRC rejected the token request: ${errorText}`);
+      }
+      throw new InternalServerErrorException(
+        `HMRC token endpoint returned ${response.status}.`,
+      );
+    }
+
+    return (await response.json()) as HmrcTokenResponse;
+  }
+
+  /** Mutates the connection entity in place with the latest token response. */
+  private applyTokenResponse(
+    connection: HmrcConnection,
+    tokenData: HmrcTokenResponse,
+    opts: { setConnectedAt: boolean },
+  ): void {
+    const now = new Date();
+
+    connection.accessToken = this.encryptToken(tokenData.access_token);
+    connection.refreshToken = this.encryptToken(tokenData.refresh_token);
+    connection.accessTokenExpiresAt = new Date(now.getTime() + tokenData.expires_in * 1000);
+
+    if (tokenData.refresh_token_expires_in) {
+      connection.refreshTokenExpiresAt = new Date(
+        now.getTime() + tokenData.refresh_token_expires_in * 1000,
+      );
+    }
+
+    if (tokenData.scope) connection.scope = tokenData.scope;
+    if (opts.setConnectedAt) connection.connectedAt = now;
+    connection.status = 'connected';
   }
 }

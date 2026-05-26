@@ -69,6 +69,21 @@ export class HmrcController {
     return { arn: connection.arn };
   }
 
+  /** Refreshes the HMRC access token using the stored refresh token. */
+  @Post('refresh-token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Refresh HMRC access token using the stored refresh token' })
+  async refreshToken(@Request() req: ExpressRequest) {
+    const tenantId = this.getTenantId(req);
+    const connection = await this.hmrcService.refreshHmrcTokens(tenantId);
+    return {
+      status: connection.status,
+      accessTokenExpiresAt: connection.accessTokenExpiresAt,
+      refreshTokenExpiresAt: connection.refreshTokenExpiresAt ?? null,
+      scope: connection.scope ?? null,
+    };
+  }
+
   /** Removes the HMRC connection for this firm. */
   @Delete('disconnect')
   @HttpCode(HttpStatus.NO_CONTENT)

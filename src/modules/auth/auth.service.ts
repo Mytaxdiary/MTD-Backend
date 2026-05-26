@@ -20,7 +20,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { hashPassword, comparePassword } from '../../common/helpers/crypto.helper';
 import { User } from '../users/entities/user.entity';
-import type { AuthResponse, TokensResponse } from './types/auth-response.type';
+import type { AuthResponse, SessionResponse, TokensResponse } from './types/auth-response.type';
 import type { JwtPayload } from './strategies/jwt.strategy';
 
 const RESET_TOKEN_EXPIRY_HOURS = 1;
@@ -217,6 +217,56 @@ export class AuthService {
 
   // ── Refresh tokens ───────────────────────────────────────────────────────
 
+  /**
+   * Validates the access token or refreshes when expired / expiring within 60s.
+   * Used by GET /auth/session on app load.
+   */
+  async restoreSession(
+    rawAccessToken?: string,
+    rawRefreshToken?: string,
+  ): Promise<SessionResponse & Partial<TokensResponse>> {
+    const refreshBufferMs = 60_000;
+
+    if (rawAccessToken) {
+      try {
+        const payload = this.jwtService.verify(rawAccessToken) as JwtPayload;
+        const expMs = (payload.exp ?? 0) * 1000;
+        const user = await this.getProfile(payload.sub);
+        const accessTokenExpiresAt = new Date(expMs).toISOString();
+
+        if (rawRefreshToken && expMs - Date.now() < refreshBufferMs) {
+          const tokens = await this.refreshTokens(rawRefreshToken);
+          return {
+            user,
+            accessTokenExpiresAt: tokens.accessTokenExpiresAt,
+            refreshed: true,
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+          };
+        }
+
+        return { user, accessTokenExpiresAt, refreshed: false };
+      } catch {
+        // Access token invalid or expired — fall through to refresh
+      }
+    }
+
+    if (rawRefreshToken) {
+      const tokens = await this.refreshTokens(rawRefreshToken);
+      const payload = this.jwtService.decode(tokens.accessToken) as JwtPayload;
+      const user = await this.getProfile(payload.sub);
+      return {
+        user,
+        accessTokenExpiresAt: tokens.accessTokenExpiresAt,
+        refreshed: true,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      };
+    }
+
+    throw new UnauthorizedException('No valid session');
+  }
+
   async refreshTokens(rawRefreshToken: string): Promise<TokensResponse> {
     const tokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
 
@@ -305,7 +355,13 @@ export class AuthService {
 
   private async issueTokens(userId: string, email: string, tenantId: string): Promise<TokensResponse> {
     const payload: JwtPayload = { sub: userId, email, tenantId };
-    const accessToken = this.jwtService.sign(payload);
+    const jwtExpiresIn = this.configService.get<string>('auth.jwtExpiresIn');
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: jwtExpiresIn as `${number}${'s' | 'm' | 'h' | 'd'}`,
+    });
+
+    const decoded = this.jwtService.decode(accessToken) as { exp?: number };
+    const accessTokenExpiresAt = new Date((decoded?.exp ?? 0) * 1000).toISOString();
 
     const rawRefreshToken = crypto.randomBytes(40).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
@@ -321,7 +377,7 @@ export class AuthService {
     });
     await this.refreshTokenRepo.save(refreshTokenEntity);
 
-    return { accessToken, refreshToken: rawRefreshToken };
+    return { accessToken, refreshToken: rawRefreshToken, accessTokenExpiresAt };
   }
 
   /** Parses duration strings like '7d', '1h', '30m' into a future Date. */

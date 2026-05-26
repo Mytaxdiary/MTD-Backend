@@ -44,7 +44,7 @@ export const envValidationSchema = Joi.object({
 
   // Auth — JWT (required: auth module is now active)
   JWT_SECRET: Joi.string().min(16).required(),
-  JWT_EXPIRES_IN: Joi.string().default('1d'),
+  JWT_EXPIRES_IN: Joi.string().default('15m'),
   REFRESH_TOKEN_SECRET: Joi.string().min(16).required(),
   REFRESH_TOKEN_EXPIRES_IN: Joi.string().default('7d'),
 });

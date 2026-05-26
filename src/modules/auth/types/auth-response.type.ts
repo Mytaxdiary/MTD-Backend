@@ -24,4 +24,13 @@ export interface AuthResponse {
 export interface TokensResponse {
   accessToken: string;
   refreshToken: string;
+  /** ISO timestamp — when the access JWT expires (for proactive client refresh). */
+  accessTokenExpiresAt: string;
+}
+
+export interface SessionResponse {
+  user: AuthUserResponse;
+  accessTokenExpiresAt: string;
+  /** True when new cookies were issued (access was expired or near expiry). */
+  refreshed: boolean;
 }

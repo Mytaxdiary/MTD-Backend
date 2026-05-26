@@ -25,6 +25,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
+import { parseDurationToMs } from '../../common/helpers/duration.helper';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -40,8 +41,6 @@ interface AuthRequest extends ExpressRequest {
 
 const ACCESS_COOKIE = 'mtd_at';
 const REFRESH_COOKIE = 'mtd_rt';
-const ONE_DAY_MS = 86_400_000;
-const SEVEN_DAYS_MS = 604_800_000;
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -118,6 +117,31 @@ export class AuthController {
     return this.authService.getProfile(req.user.userId);
   }
 
+  // ── Session (validate / proactive refresh on load) ────────────────────────
+
+  @Get('session')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Restore session — refresh access token if expired or expiring soon',
+  })
+  @ApiOkResponse({ description: 'Session valid; may have issued new cookies' })
+  @ApiUnauthorizedResponse({ description: 'No valid session' })
+  async session(@Request() req: ExpressRequest, @Res({ passthrough: true }) res: Response) {
+    const cookies = req.cookies as Record<string, string>;
+    const result = await this.authService.restoreSession(
+      cookies?.[ACCESS_COOKIE],
+      cookies?.[REFRESH_COOKIE],
+    );
+    if (result.refreshed && result.accessToken && result.refreshToken) {
+      this.setAuthCookies(res, result.accessToken, result.refreshToken);
+    }
+    return {
+      user: result.user,
+      accessTokenExpiresAt: result.accessTokenExpiresAt,
+      refreshed: result.refreshed,
+    };
+  }
+
   // ── Refresh ───────────────────────────────────────────────────────────────
 
   @Post('refresh')
@@ -172,18 +196,24 @@ export class AuthController {
 
   private setAuthCookies(res: Response, accessToken: string, refreshToken: string): void {
     const isProd = this.configService.get<string>('app.env') === 'production';
-    
-    console.log('Setting cookies with config:', { isProd, secure: isProd });
-    
+    const accessMaxAge = parseDurationToMs(
+      this.configService.get<string>('auth.jwtExpiresIn') ?? '15m',
+      900_000,
+    );
+    const refreshMaxAge = parseDurationToMs(
+      this.configService.get<string>('auth.refreshTokenExpiresIn') ?? '7d',
+      604_800_000,
+    );
+
     const cookieOptions = {
       httpOnly: true,
       secure: isProd,
       sameSite: isProd ? ('none' as const) : ('lax' as const),
       path: '/',
     };
-    
-    res.cookie(ACCESS_COOKIE, accessToken, { ...cookieOptions, maxAge: ONE_DAY_MS });
-    res.cookie(REFRESH_COOKIE, refreshToken, { ...cookieOptions, maxAge: SEVEN_DAYS_MS });
+
+    res.cookie(ACCESS_COOKIE, accessToken, { ...cookieOptions, maxAge: accessMaxAge });
+    res.cookie(REFRESH_COOKIE, refreshToken, { ...cookieOptions, maxAge: refreshMaxAge });
   }
 
   private clearAuthCookies(res: Response): void {
