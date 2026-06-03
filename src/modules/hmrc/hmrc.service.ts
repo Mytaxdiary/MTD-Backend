@@ -11,6 +11,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { HmrcConnection } from './entities/hmrc-connection.entity';
 import { encrypt, decrypt, isEncrypted } from './crypto.util';
+import { HmrcApiClient } from './hmrc-api.client';
+import type {
+  FraudPreventionValidationResult,
+  HmrcFraudRequestContext,
+} from './fraud-prevention.types';
 
 interface HmrcTokenResponse {
   access_token: string;
@@ -33,6 +38,7 @@ export class HmrcService {
     private readonly configService: ConfigService,
     @InjectRepository(HmrcConnection)
     private readonly connectionRepo: Repository<HmrcConnection>,
+    private readonly hmrcApiClient: HmrcApiClient,
   ) {}
 
   // ─── Private helpers ──────────────────────────────────────────────────────
@@ -188,6 +194,57 @@ export class HmrcService {
     await this.connectionRepo.save(connection);
     this.logger.log(`ARN updated for tenant ${tenantId}: ${arn}`);
     return connection;
+  }
+
+  /**
+   * Calls HMRC test validator with Gov-* fraud prevention headers.
+   * https://developer.service.hmrc.gov.uk/api-documentation/docs/api/service/txm-fph-validator-api/1.0
+   */
+  async validateFraudHeaders(
+    tenantId: string,
+    fraudContext: HmrcFraudRequestContext,
+  ): Promise<FraudPreventionValidationResult> {
+    const baseUrl = this.configService.get<string>('hmrc.baseUrl');
+    if (!baseUrl) {
+      throw new InternalServerErrorException('HMRC_BASE_URL is not configured.');
+    }
+
+    const accessToken = await this.getValidAccessToken(tenantId);
+
+    let response: Response;
+    try {
+      response = await this.hmrcApiClient.fetch(
+        `${baseUrl}/test/fraud-prevention-headers/validate`,
+        {
+          method: 'GET',
+          accessToken,
+          fraudContext,
+          headers: { Accept: 'application/vnd.hmrc.1.0+json' },
+        },
+      );
+    } catch (err) {
+      this.logger.error('HMRC fraud header validation network error', err);
+      throw new InternalServerErrorException('Failed to contact HMRC fraud header validator.');
+    }
+
+    const text = await response.text();
+    let body: FraudPreventionValidationResult;
+    try {
+      body = text ? (JSON.parse(text) as FraudPreventionValidationResult) : {};
+    } catch {
+      throw new InternalServerErrorException(
+        `HMRC fraud validator returned non-JSON (${response.status}).`,
+      );
+    }
+
+    if (!response.ok) {
+      this.logger.warn(`HMRC fraud validator HTTP ${response.status}: ${text}`);
+      throw new BadRequestException(
+        body.message ?? `HMRC fraud header validation failed (${response.status}).`,
+      );
+    }
+
+    return body;
   }
 
   /** Removes the HMRC connection for a tenant (hard delete). */

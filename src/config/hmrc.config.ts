@@ -16,4 +16,11 @@ export default registerAs('hmrc', () => ({
    * Required in production. Optional in sandbox/dev (tokens stored plain if not set).
    */
   encryptionKey: process.env.HMRC_ENCRYPTION_KEY,
+  /** Fraud prevention — WEB_APP_VIA_SERVER vendor headers */
+  vendorProductName: process.env.HMRC_VENDOR_PRODUCT_NAME ?? 'NewEffect MTD ITSA',
+  vendorVersion: process.env.HMRC_VENDOR_VERSION ?? 'mtd-api=1.0.0&mtd-app=1.0.0',
+  vendorPublicIp: process.env.HMRC_VENDOR_PUBLIC_IP,
+  vendorLicenseIds: process.env.HMRC_VENDOR_LICENSE_IDS,
+  /** Local dev fallback for Gov-Client-Public-Port when the browser cannot detect it */
+  devClientPublicPort: process.env.HMRC_DEV_CLIENT_PUBLIC_PORT,
 }));

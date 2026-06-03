@@ -12,10 +12,32 @@ import { QueryFailedError, Repository } from 'typeorm';
 import { Client } from './entities/client.entity';
 import { CreateClientDto } from './dto/create-client.dto';
 import { HmrcService } from '../hmrc/hmrc.service';
+import { HmrcApiClient } from '../hmrc/hmrc-api.client';
+import type { HmrcFraudRequestContext } from '../hmrc/fraud-prevention.types';
 import { MailService } from '../mail/mail.service';
 import { Tenant } from '../tenants/entities/tenant.entity';
-import { invitationErrorToUserMessage } from './hmrc-invitation-errors.util';
+import {
+  invitationErrorToUserMessage,
+  relationshipErrorToUserMessage,
+} from './hmrc-invitation-errors.util';
 import type { CreateClientResult } from './dto/create-client-result.dto';
+import type { ClientRelationshipStatusDto } from './dto/client-relationship-status.dto';
+import type { GetItsaStatusQueryDto } from './dto/get-itsa-status-query.dto';
+import type { ItsaStatusResponse } from './hmrc-itsa.types';
+import { itsaErrorToUserMessage } from './hmrc-itsa-errors.util';
+import { normalizeTaxYear } from './tax-year.util';
+
+/** HMRC POST /relationships result. */
+type HmrcRelationshipResult = 'active' | 'inactive';
+
+/** Invitation statuses that won't change — no need to poll HMRC again. */
+const TERMINAL_INVITATION_STATUSES = new Set([
+  // 'accepted',
+  'rejected',
+  'expired',
+  'cancelled',
+  'deauthorised',
+]);
 
 /** Thrown when HMRC invitation API fails — carries status + body for user-message mapping. */
 class HmrcInvitationFailedError extends Error {
@@ -39,6 +61,7 @@ export class ClientsService {
     private readonly tenantRepo: Repository<Tenant>,
     private readonly configService: ConfigService,
     private readonly hmrcService: HmrcService,
+    private readonly hmrcApiClient: HmrcApiClient,
     private readonly mailService: MailService,
   ) {}
 
@@ -47,7 +70,12 @@ export class ClientsService {
     return this.configService.get<string>('hmrc.baseUrl')!;
   }
 
-  async create(tenantId: string, agentEmail: string, dto: CreateClientDto): Promise<CreateClientResult> {
+  async create(
+    tenantId: string,
+    agentEmail: string,
+    dto: CreateClientDto,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<CreateClientResult> {
     // 1. Check HMRC connection and ARN
     const connection = await this.hmrcService.getStatus(tenantId);
     if (!connection || connection.status !== 'connected') {
@@ -110,6 +138,7 @@ export class ClientsService {
       agentName,
       firmName,
       personalMessage: dto.personalMessage,
+      fraudContext,
     });
   }
 
@@ -119,6 +148,7 @@ export class ClientsService {
     clientId: string,
     agentEmail: string,
     personalMessage?: string,
+    fraudContext?: HmrcFraudRequestContext | null,
   ): Promise<CreateClientResult> {
     const client = await this.findOne(tenantId, clientId);
 
@@ -162,10 +192,20 @@ export class ClientsService {
       agentName,
       firmName,
       personalMessage,
+      fraudContext,
     });
   }
 
-  async findAll(tenantId: string): Promise<Client[]> {
+  async findAll(
+    tenantId: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<Client[]> {
+    const clients = await this.clientRepo.find({
+      where: { tenantId },
+      order: { createdAt: 'DESC' },
+    });
+    await this.syncInvitationStatusesFromHmrc(tenantId, clients, fraudContext);
+    await this.syncRelationshipsFromHmrc(tenantId, clients, fraudContext);
     return this.clientRepo.find({
       where: { tenantId },
       order: { createdAt: 'DESC' },
@@ -173,19 +213,32 @@ export class ClientsService {
   }
 
   /** Clients with an HMRC invitation awaiting acceptance (sandbox / live pending). */
-  async findOutstandingInvitations(tenantId: string): Promise<Client[]> {
+  async findOutstandingInvitations(
+    tenantId: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<Client[]> {
     const clients = await this.clientRepo.find({
       where: { tenantId, invitationStatus: 'pending' },
       order: { invitationSentAt: 'DESC' },
     });
-    return clients.filter((c) => !!c.invitationId);
+    const withInvite = clients.filter((c) => !!c.invitationId);
+    await this.syncInvitationStatusesFromHmrc(tenantId, withInvite, fraudContext);
+    const refreshed = await this.clientRepo.find({
+      where: { tenantId, invitationStatus: 'pending' },
+      order: { invitationSentAt: 'DESC' },
+    });
+    return refreshed.filter((c) => !!c.invitationId);
   }
 
   /**
    * Sandbox only — simulates the client accepting via Government Gateway.
    * PUT /agent-authorisation-test-support/invitations/{invitationId} (Postman step 9).
    */
-  async acceptInvitationSandbox(tenantId: string, clientId: string): Promise<Client> {
+  async acceptInvitationSandbox(
+    tenantId: string,
+    clientId: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<Client> {
     const client = await this.findOne(tenantId, clientId);
 
     if (!client.invitationId) {
@@ -202,9 +255,10 @@ export class ClientsService {
     const url = `${this.hmrcBaseUrl}/agent-authorisation-test-support/invitations/${client.invitationId}`;
 
     try {
-      const res = await fetch(url, {
+      const res = await this.hmrcApiClient.fetch(url, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${accessToken}` },
+        accessToken,
+        fraudContext,
       });
       if (!res.ok) {
         const text = await res.text();
@@ -220,7 +274,7 @@ export class ClientsService {
       throw new InternalServerErrorException('Failed to call HMRC sandbox accept API.');
     }
 
-    return this.checkInvitationStatus(tenantId, clientId);
+    return this.checkInvitationStatus(tenantId, clientId, fraudContext);
   }
 
   async findOne(tenantId: string, id: string): Promise<Client> {
@@ -230,7 +284,11 @@ export class ClientsService {
   }
 
   /** Polls HMRC for the latest invitation status and updates the DB record. */
-  async checkInvitationStatus(tenantId: string, id: string): Promise<Client> {
+  async checkInvitationStatus(
+    tenantId: string,
+    id: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<Client> {
     const client = await this.findOne(tenantId, id);
 
     if (!client.invitationId) {
@@ -244,38 +302,315 @@ export class ClientsService {
 
     const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
 
-    const url = `${this.hmrcBaseUrl}/agents/${connection.arn}/invitations/${client.invitationId}`;
-
-    let hmrcStatus: string;
     try {
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`HMRC returned ${res.status}: ${text}`);
-      }
-      const data = (await res.json()) as { status?: string };
-      hmrcStatus = this.normalizeHmrcInvitationStatus(data.status ?? '');
+      await this.syncOneInvitationFromHmrc(client, connection.arn, accessToken, fraudContext);
     } catch (err) {
       this.logger.error(`Failed to check invitation status for client ${id}`, err);
       throw new InternalServerErrorException('Failed to check invitation status with HMRC.');
     }
 
-    if (hmrcStatus) {
-      client.invitationStatus = hmrcStatus;
-      if (hmrcStatus === 'accepted' && !client.authorisedAt) {
-        client.authorisedAt = new Date();
-      }
-      await this.clientRepo.save(client);
-    } else {
-      this.logger.warn(`HMRC returned empty invitation status for client ${id}`);
-    }
+    const refreshed = await this.findOne(tenantId, id);
+    return this.verifyAndPersistRelationship(tenantId, refreshed, fraudContext);
+  }
 
+  /**
+   * Verifies agent–client relationship with HMRC (Postman step 8).
+   * POST /agents/{arn}/relationships — 204 = active, 404 = inactive.
+   */
+  async checkRelationshipStatus(
+    tenantId: string,
+    id: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<ClientRelationshipStatusDto> {
+    const client = await this.findOne(tenantId, id);
+    const updated = await this.verifyAndPersistRelationship(tenantId, client, fraudContext);
+    return {
+      client: updated,
+      relationshipActive: !!updated.authorisedAt,
+    };
+  }
+
+  /**
+   * Gatekeeper for future MTD ITSA API calls — throws if relationship is not active.
+   */
+  async ensureClientAuthorisedForMtd(
+    tenantId: string,
+    clientId: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<Client> {
+    const { client, relationshipActive } = await this.checkRelationshipStatus(
+      tenantId,
+      clientId,
+      fraudContext,
+    );
+    if (!relationshipActive) {
+      throw new BadRequestException(
+        'This client has not authorised your firm for MTD yet. ' +
+          'Wait for them to accept the HMRC invitation, then refresh relationship status.',
+      );
+    }
     return client;
   }
 
+  /**
+   * Retrieve ITSA status from HMRC (SA Individual Details v2.0).
+   * GET /individuals/person/itsa-status/{nino}/{taxYear}
+   */
+  async getItsaStatus(
+    tenantId: string,
+    clientId: string,
+    query: GetItsaStatusQueryDto,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<ItsaStatusResponse> {
+    let client = await this.findOne(tenantId, clientId);
+    if (!client.authorisedAt) {
+      client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    }
+
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const taxYear = normalizeTaxYear(query.taxYear);
+
+    const params = new URLSearchParams();
+    if (query.history === true) params.set('history', 'true');
+    if (query.futureYears === true) params.set('futureYears', 'true');
+    const qs = params.toString() ? `?${params.toString()}` : '';
+
+    const url =
+      `${this.hmrcBaseUrl}/individuals/person/itsa-status/` +
+      `${encodeURIComponent(client.nino)}/${encodeURIComponent(taxYear)}${qs}`;
+
+    let res: Response;
+    try {
+      res = await this.hmrcApiClient.fetch(url, {
+        accessToken,
+        fraudContext,
+        headers: { Accept: 'application/vnd.hmrc.2.0+json' },
+      });
+    } catch (err) {
+      this.logger.error(`HMRC ITSA status network error for client ${clientId}`, err);
+      throw new InternalServerErrorException('Failed to contact HMRC for ITSA status.');
+    }
+
+    const text = await res.text();
+    if (!res.ok) {
+      this.logger.warn(`HMRC ITSA status ${res.status} for client ${clientId}: ${text}`);
+      throw new BadRequestException(itsaErrorToUserMessage(res.status, text));
+    }
+
+    try {
+      return text ? (JSON.parse(text) as ItsaStatusResponse) : { itsaStatuses: [] };
+    } catch {
+      throw new InternalServerErrorException('HMRC returned invalid JSON for ITSA status.');
+    }
+  }
+
   // ─── Private helpers ──────────────────────────────────────────────────────
+
+  /** True when HMRC should be polled for the latest invitation status. */
+  private needsHmrcStatusSync(client: Client): boolean {
+    if (!client.invitationId) return false;
+    return !TERMINAL_INVITATION_STATUSES.has(client.invitationStatus);
+  }
+
+  /**
+   * Best-effort batch sync — polls HMRC for non-terminal invitations.
+   * Failures are logged; list still returns cached DB values.
+   */
+  private async syncInvitationStatusesFromHmrc(
+    tenantId: string,
+    clients: Client[],
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<void> {
+    const toSync = clients.filter((c) => this.needsHmrcStatusSync(c));
+    if (toSync.length === 0) return;
+    
+    const connection = await this.hmrcService.getStatus(tenantId);
+    if (!connection?.arn) return;
+    
+    let accessToken: string;
+    try {
+      accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    } catch (err) {
+      this.logger.warn(`Skipping HMRC invitation sync for tenant ${tenantId}`, err);
+      return;
+    }
+
+
+    await Promise.allSettled(
+      toSync.map((client) =>
+        this.syncOneInvitationFromHmrc(client, connection.arn!, accessToken, fraudContext),
+      ),
+    );
+  }
+
+  /** Fetches invitation status from HMRC and persists it on the client row. */
+  private async syncOneInvitationFromHmrc(
+    client: Client,
+    arn: string,
+    accessToken: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<void> {
+    const url = `${this.hmrcBaseUrl}/agents/${arn}/invitations/${client.invitationId}`;
+
+    const res = await this.hmrcApiClient.fetch(url, {
+      accessToken,
+      fraudContext,
+    });
+
+    const text = await res.text();
+    if (!res.ok) {
+      if (res.status === 403 || res.status === 404) {
+        this.logger.warn(
+          `HMRC invitation sync skipped for client ${client.id} (${res.status}): ${text}`,
+        );
+        return;
+      }
+      throw new Error(`HMRC returned ${res.status}: ${text}`);
+    }
+
+    let data: { status?: string };
+    try {
+      data = JSON.parse(text) as { status?: string };
+    } catch {
+      this.logger.warn(`HMRC returned non-JSON invitation status for client ${client.id}`);
+      return;
+    }
+    const hmrcStatus = this.normalizeHmrcInvitationStatus(data.status ?? '');
+
+    if (!hmrcStatus) {
+      this.logger.warn(`HMRC returned empty invitation status for client ${client.id}`);
+      return;
+    }
+
+    client.invitationStatus = hmrcStatus;
+    await this.clientRepo.save(client);
+
+    if (hmrcStatus === 'accepted' || hmrcStatus === 'partial-auth') {
+      await this.syncRelationshipFromHmrc(client, arn, accessToken, fraudContext);
+    }
+  }
+
+  /** Best-effort relationship sync for accepted clients missing authorisedAt. */
+  private async syncRelationshipsFromHmrc(
+    tenantId: string,
+    clients: Client[],
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<void> {
+    const needsCheck = clients.filter(
+      (c) =>
+        ['accepted', 'partial-auth'].includes(c.invitationStatus) && !c.authorisedAt,
+    );
+    if (needsCheck.length === 0) return;
+
+    const connection = await this.hmrcService.getStatus(tenantId);
+    if (!connection?.arn) return;
+
+    let accessToken: string;
+    try {
+      accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    } catch (err) {
+      this.logger.warn(`Skipping HMRC relationship sync for tenant ${tenantId}`, err);
+      return;
+    }
+
+    await Promise.allSettled(
+      needsCheck.map((client) =>
+        this.syncRelationshipFromHmrc(client, connection.arn!, accessToken, fraudContext),
+      ),
+    );
+  }
+
+  private async verifyAndPersistRelationship(
+    tenantId: string,
+    client: Client,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<Client> {
+    if (!['accepted', 'partial-auth'].includes(client.invitationStatus)) {
+      return client;
+    }
+
+    const connection = await this.hmrcService.getStatus(tenantId);
+    if (!connection?.arn) return client;
+
+    let accessToken: string;
+    try {
+      accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    } catch (err) {
+      this.logger.warn(`Cannot verify relationship for client ${client.id}`, err);
+      return client;
+    }
+
+    await this.syncRelationshipFromHmrc(client, connection.arn, accessToken, fraudContext);
+    return this.findOne(tenantId, client.id);
+  }
+
+  /**
+   * POST /agents/{arn}/relationships — returns true and sets authorisedAt when HMRC returns 204.
+   */
+  private async syncRelationshipFromHmrc(
+    client: Client,
+    arn: string,
+    accessToken: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<boolean> {
+    try {
+      const result = await this.verifyHmrcRelationship(
+        client,
+        arn,
+        accessToken,
+        fraudContext,
+      );
+      if (result === 'active') {
+        if (!client.authorisedAt) {
+          client.authorisedAt = new Date();
+          await this.clientRepo.save(client);
+          this.logger.log(`HMRC relationship active for client ${client.id}`);
+        }
+        return true;
+      }
+      return false;
+    } catch (err) {
+      this.logger.warn(`HMRC relationship sync failed for client ${client.id}`, err);
+      return false;
+    }
+  }
+
+  private async verifyHmrcRelationship(
+    client: Client,
+    arn: string,
+    accessToken: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<HmrcRelationshipResult> {
+    const url = `${this.hmrcBaseUrl}/agents/${arn}/relationships`;
+
+    const res = await this.hmrcApiClient.fetch(url, {
+      method: 'POST',
+      accessToken,
+      fraudContext,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service: ['MTD-IT'],
+        clientIdType: 'ni',
+        clientId: client.nino,
+        knownFact: client.postcode,
+        agentType: client.agentType,
+      }),
+    });
+
+    if (res.status === 204) return 'active';
+
+    const text = await res.text();
+
+    if (res.status === 404) {
+      this.logger.debug(`HMRC relationship inactive for client ${client.id}: ${text}`);
+      return 'inactive';
+    }
+
+    this.logger.warn(
+      `HMRC relationship check unexpected response for client ${client.id} (${res.status}): ${text}`,
+    );
+    throw new BadRequestException(relationshipErrorToUserMessage(res.status, text));
+  }
 
   private async findByNino(tenantId: string, nino: string): Promise<Client | null> {
     return this.clientRepo.findOne({ where: { tenantId, nino } });
@@ -303,8 +638,10 @@ export class ClientsService {
     agentName: string;
     firmName: string;
     personalMessage?: string;
+    fraudContext?: HmrcFraudRequestContext | null;
   }): Promise<CreateClientResult> {
-    const { client, arn, accessToken, agentName, firmName, personalMessage } = params;
+    const { client, arn, accessToken, agentName, firmName, personalMessage, fraudContext } =
+      params;
 
     try {
       const invitationId = await this.createHmrcInvitation({
@@ -313,6 +650,7 @@ export class ClientsService {
         nino: client.nino,
         postcode: client.postcode,
         agentType: client.agentType,
+        fraudContext,
       });
 
       const now = new Date();
@@ -360,16 +698,15 @@ export class ClientsService {
     nino: string;
     postcode: string;
     agentType: string;
+    fraudContext?: HmrcFraudRequestContext | null;
   }): Promise<string> {
-    const { arn, accessToken, nino, postcode, agentType } = params;
+    const { arn, accessToken, nino, postcode, agentType, fraudContext } = params;
 
-    const res = await fetch(`${this.hmrcBaseUrl}/agents/${arn}/invitations`, {
+    const res = await this.hmrcApiClient.fetch(`${this.hmrcBaseUrl}/agents/${arn}/invitations`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      accessToken,
+      fraudContext,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         service: ['MTD-IT'],
         clientType: 'personal',

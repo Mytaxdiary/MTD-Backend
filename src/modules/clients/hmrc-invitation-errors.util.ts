@@ -4,7 +4,7 @@ interface HmrcErrorBody {
   message?: string;
 }
 
-function parseHmrcErrorJson(text: string): HmrcErrorBody | null {
+export function parseHmrcErrorJson(text: string): HmrcErrorBody | null {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return null;
   try {
@@ -66,4 +66,33 @@ export function invitationErrorToUserMessage(httpStatus: number, responseText: s
     'HMRC could not send the invitation. The client was saved — please try again. ' +
     'If the problem continues, check your ARN in Settings → HMRC Connection.'
   );
+}
+
+/** User-facing message when POST /agents/{arn}/relationships fails or is inactive. */
+export function relationshipErrorToUserMessage(httpStatus: number, responseText: string): string {
+  const parsed = parseHmrcErrorJson(responseText);
+  const code = parsed?.code;
+
+  if (code === 'RELATIONSHIP_NOT_FOUND' || httpStatus === 404) {
+    return (
+      'This client has not authorised your firm yet, or the authorisation is no longer active. ' +
+      'Send or resend an HMRC invitation and ask the client to accept it.'
+    );
+  }
+
+  if (code === 'NO_PERMISSION_ON_AGENCY') {
+    return (
+      'The ARN in Settings does not match your HMRC connection. Correct your ARN and try again.'
+    );
+  }
+
+  if (httpStatus === 401) {
+    return 'Your HMRC connection has expired. Reconnect in Settings → HMRC Connection.';
+  }
+
+  if (httpStatus >= 500) {
+    return 'HMRC is temporarily unavailable. Please try again later.';
+  }
+
+  return parsed?.message ?? 'Could not verify the HMRC agent–client relationship.';
 }

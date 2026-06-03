@@ -17,6 +17,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { HmrcService } from './hmrc.service';
 import { ExchangeCodeDto } from './dto/exchange-code.dto';
 import { UpdateArnDto } from './dto/update-arn.dto';
+import { buildHmrcFraudRequestContext } from './fraud-prevention.parser';
+import { summarizeFraudValidation } from './fraud-prevention.validation.util';
 
 @ApiTags('HMRC')
 @ApiBearerAuth('access-token')
@@ -29,6 +31,10 @@ export class HmrcController {
     const tenantId = (req.user as { tenantId?: string })?.tenantId;
     if (!tenantId) throw new NotFoundException('No tenant associated with this account');
     return tenantId;
+  }
+
+  private getUserEmail(req: ExpressRequest): string {
+    return (req.user as { email?: string })?.email ?? '';
   }
 
   /** Returns the HMRC OAuth authorize URL. Frontend should redirect the user there. */
@@ -91,6 +97,17 @@ export class HmrcController {
   async disconnect(@Request() req: ExpressRequest) {
     const tenantId = this.getTenantId(req);
     await this.hmrcService.disconnect(tenantId);
+  }
+
+  /** Validates Gov-* fraud prevention headers with HMRC (sandbox/live test API). */
+  @Get('validate-fraud-headers')
+  @ApiOperation({ summary: 'Validate HMRC fraud prevention headers for the current session' })
+  async validateFraudHeaders(@Request() req: ExpressRequest) {
+    const tenantId = this.getTenantId(req);
+    const fraudContext = buildHmrcFraudRequestContext(req, this.getUserEmail(req));
+    const result = await this.hmrcService.validateFraudHeaders(tenantId, fraudContext);
+    const summary = summarizeFraudValidation(result);
+    return { ...summary, ...result };
   }
 
   /** Returns current HMRC connection status for this firm. */
