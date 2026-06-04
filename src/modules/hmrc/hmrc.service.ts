@@ -16,6 +16,12 @@ import type {
   FraudPreventionValidationResult,
   HmrcFraudRequestContext,
 } from './fraud-prevention.types';
+import type {
+  HmrcSandboxAgentUser,
+  HmrcSandboxIndividualRaw,
+  HmrcSandboxIndividualUser,
+  SandboxTestUsersResult,
+} from './hmrc-sandbox.types';
 
 interface HmrcTokenResponse {
   access_token: string;
@@ -247,6 +253,37 @@ export class HmrcService {
     return body;
   }
 
+  async createSandboxTestUsers(): Promise<SandboxTestUsersResult> {
+    this.assertSandboxEnvironment();
+
+    const tokenData = await this.requestTokens({ grant_type: 'client_credentials' });
+    const accessToken = tokenData.access_token;
+
+    const agent = await this.createSandboxTestUser<HmrcSandboxAgentUser>(
+      '/create-test-user/agents',
+      accessToken,
+      { serviceNames: ['agent-services'] },
+    );
+
+    const individualRaw = await this.createSandboxTestUser<HmrcSandboxIndividualRaw>(
+      '/create-test-user/individuals',
+      accessToken,
+      { serviceNames: ['national-insurance', 'mtd-income-tax'] },
+    );
+    const individual = this.normalizeSandboxIndividual(individualRaw);
+
+    return {
+      agent,
+      individual,
+      nextSteps: [
+        `Connect HMRC below using the agent User ID (${agent.userId}) and password.`,
+        `After connecting, save ARN ${agent.agentServicesAccountNumber} in the ARN field.`,
+        `Add a client with NINO ${individual.nino} and postcode ${individual.postcode}.`,
+        'Send an HMRC invitation from the client record, then accept it under Sandbox invitations.',
+      ],
+    };
+  }
+
   /** Removes the HMRC connection for a tenant (hard delete). */
   async disconnect(tenantId: string): Promise<void> {
     const connection = await this.connectionRepo.findOne({ where: { tenantId } });
@@ -258,6 +295,73 @@ export class HmrcService {
   }
 
   // ─── Token request helpers ────────────────────────────────────────────────
+
+  /** HMRC nests postcode under individualDetails.address — lift it for the app. */
+  private normalizeSandboxIndividual(
+    raw: HmrcSandboxIndividualRaw,
+  ): HmrcSandboxIndividualUser {
+    const postcode =
+      raw.postcode?.trim() ||
+      raw.individualDetails?.address?.postcode?.trim() ||
+      '';
+
+    if (!raw.nino?.trim()) {
+      throw new BadRequestException('HMRC individual test user response is missing NINO.');
+    }
+    if (!postcode) {
+      throw new BadRequestException(
+        'HMRC individual test user response is missing postcode (expected under individualDetails.address).',
+      );
+    }
+
+    return { ...raw, postcode };
+  }
+
+  private assertSandboxEnvironment(): void {
+    const baseUrl = this.configService.get<string>('hmrc.baseUrl') ?? '';
+    if (!baseUrl.includes('test-api')) {
+      throw new BadRequestException(
+        'Sandbox test users can only be created when HMRC_BASE_URL points to the HMRC sandbox (test-api.service.hmrc.gov.uk).',
+      );
+    }
+  }
+
+  private async createSandboxTestUser<T>(
+    path: string,
+    bearerToken: string,
+    body: { serviceNames: string[] },
+  ): Promise<T> {
+    const baseUrl = this.configService.get<string>('hmrc.baseUrl');
+    if (!baseUrl) {
+      throw new InternalServerErrorException('HMRC_BASE_URL is not configured.');
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${bearerToken}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      this.logger.error(`HMRC create-test-user network error (${path})`, err);
+      throw new InternalServerErrorException('Failed to contact HMRC to create a sandbox test user.');
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      this.logger.error(`HMRC create-test-user failed (${path}): ${response.status} ${errorText}`);
+      throw new BadRequestException(
+        `HMRC could not create sandbox test user (${response.status}): ${errorText}`,
+      );
+    }
+
+    return (await response.json()) as T;
+  }
 
   /**
    * Calls HMRC POST /oauth/token. Used for both `authorization_code` (initial exchange)

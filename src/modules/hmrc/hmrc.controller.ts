@@ -37,6 +37,18 @@ export class HmrcController {
     return (req.user as { email?: string })?.email ?? '';
   }
 
+  /**
+   * HMRC sandbox only — client_credentials token, then create agent + individual test users
+   * (Postman folder "00 - Test Users" steps 0–2).
+   */
+  @Post('sandbox/test-users')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Create HMRC sandbox agent and individual test users' })
+  async createSandboxTestUsers(@Request() req: ExpressRequest) {
+    this.getTenantId(req);
+    return this.hmrcService.createSandboxTestUsers();
+  }
+
   /** Returns the HMRC OAuth authorize URL. Frontend should redirect the user there. */
   @Get('connect')
   @ApiOperation({ summary: 'Get HMRC OAuth authorize URL' })

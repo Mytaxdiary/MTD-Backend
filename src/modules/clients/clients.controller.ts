@@ -96,6 +96,31 @@ export class ClientsController {
     return this.clientsService.getItsaStatus(tenantId, id, query, this.fraudContext(req));
   }
 
+  /** List all business income sources from HMRC (Business Details v2.0) */
+  @Get(':id/businesses')
+  @ApiOperation({ summary: 'List HMRC business income sources for a client' })
+  async listBusinesses(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.listBusinesses(tenantId, id, this.fraudContext(req));
+  }
+
+  /** Retrieve one business income source from HMRC (Business Details v2.0) */
+  @Get(':id/businesses/:businessId')
+  @ApiOperation({ summary: 'Retrieve HMRC business details for a client business' })
+  async getBusinessDetails(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('businessId') businessId: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getBusinessDetails(
+      tenantId,
+      id,
+      businessId,
+      this.fraudContext(req),
+    );
+  }
+
   /** Verify agent–client relationship with HMRC (POST /agents/{arn}/relationships) */
   @Get(':id/relationship-status')
   @ApiOperation({ summary: 'Verify HMRC agent–client relationship is active' })

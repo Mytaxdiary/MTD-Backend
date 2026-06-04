@@ -24,7 +24,9 @@ import type { CreateClientResult } from './dto/create-client-result.dto';
 import type { ClientRelationshipStatusDto } from './dto/client-relationship-status.dto';
 import type { GetItsaStatusQueryDto } from './dto/get-itsa-status-query.dto';
 import type { ItsaStatusResponse } from './hmrc-itsa.types';
+import type { BusinessDetailsResponse, BusinessListResponse } from './hmrc-business.types';
 import { itsaErrorToUserMessage } from './hmrc-itsa-errors.util';
+import { businessErrorToUserMessage } from './hmrc-business-errors.util';
 import { normalizeTaxYear } from './tax-year.util';
 
 /** HMRC POST /relationships result. */
@@ -404,7 +406,77 @@ export class ClientsService {
     }
   }
 
+  /**
+   * List all business income sources for a client.
+   * GET /individuals/business/details/{nino}/list
+   */
+  async listBusinesses(
+    tenantId: string,
+    clientId: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<BusinessListResponse> {
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+
+    const url =
+      `${this.hmrcBaseUrl}/individuals/business/details/` +
+      `${encodeURIComponent(client.nino)}/list`;
+
+    return this.fetchHmrcBusinessJson(url, accessToken, fraudContext, businessErrorToUserMessage);
+  }
+
+  /**
+   * Retrieve details for one business income source.
+   * GET /individuals/business/details/{nino}/{businessId}
+   */
+  async getBusinessDetails(
+    tenantId: string,
+    clientId: string,
+    businessId: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<BusinessDetailsResponse> {
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+
+    const url =
+      `${this.hmrcBaseUrl}/individuals/business/details/` +
+      `${encodeURIComponent(client.nino)}/${encodeURIComponent(businessId)}`;
+
+    return this.fetchHmrcBusinessJson(url, accessToken, fraudContext, businessErrorToUserMessage);
+  }
+
   // ─── Private helpers ──────────────────────────────────────────────────────
+
+  private async fetchHmrcBusinessJson<T>(
+    url: string,
+    accessToken: string,
+    fraudContext: HmrcFraudRequestContext | null | undefined,
+    errorMapper: (status: number, text: string) => string,
+  ): Promise<T> {
+    let res: Response;
+    try {
+      res = await this.hmrcApiClient.fetch(url, {
+        accessToken,
+        fraudContext,
+        headers: { Accept: 'application/vnd.hmrc.2.0+json' },
+      });
+    } catch (err) {
+      this.logger.error(`HMRC business details network error: ${url}`, err);
+      throw new InternalServerErrorException('Failed to contact HMRC for business details.');
+    }
+
+    const text = await res.text();
+    if (!res.ok) {
+      this.logger.warn(`HMRC business details ${res.status}: ${text}`);
+      throw new BadRequestException(errorMapper(res.status, text));
+    }
+
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new InternalServerErrorException('HMRC returned invalid JSON for business details.');
+    }
+  }
 
   /** True when HMRC should be polled for the latest invitation status. */
   private needsHmrcStatusSync(client: Client): boolean {
