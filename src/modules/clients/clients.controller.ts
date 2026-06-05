@@ -6,6 +6,8 @@ import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { ResendInvitationDto } from './dto/resend-invitation.dto';
 import { GetItsaStatusQueryDto } from './dto/get-itsa-status-query.dto';
+import { GetIncomeExpenditureObligationsQueryDto } from './dto/get-income-expenditure-obligations-query.dto';
+import { GetCrystallisationObligationsQueryDto } from './dto/get-crystallisation-obligations-query.dto';
 import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
 
 interface RequestUser {
@@ -117,6 +119,40 @@ export class ClientsController {
       tenantId,
       id,
       businessId,
+      this.fraudContext(req),
+    );
+  }
+
+  /** Income & expenditure obligations (Obligations MTD v3.0) */
+  @Get(':id/obligations/income-and-expenditure')
+  @ApiOperation({ summary: 'Retrieve HMRC quarterly obligations for a client business' })
+  async getIncomeAndExpenditureObligations(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Query() query: GetIncomeExpenditureObligationsQueryDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getIncomeAndExpenditureObligations(
+      tenantId,
+      id,
+      query,
+      this.fraudContext(req),
+    );
+  }
+
+  /** Final declaration obligations (Obligations MTD v3.0 crystallisation) */
+  @Get(':id/obligations/crystallisation')
+  @ApiOperation({ summary: 'Retrieve HMRC final declaration obligations for a client' })
+  async getCrystallisationObligations(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Query() query: GetCrystallisationObligationsQueryDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getCrystallisationObligations(
+      tenantId,
+      id,
+      query,
       this.fraudContext(req),
     );
   }

@@ -25,8 +25,16 @@ import type { ClientRelationshipStatusDto } from './dto/client-relationship-stat
 import type { GetItsaStatusQueryDto } from './dto/get-itsa-status-query.dto';
 import type { ItsaStatusResponse } from './hmrc-itsa.types';
 import type { BusinessDetailsResponse, BusinessListResponse } from './hmrc-business.types';
+import type {
+  CrystallisationObligationsResponse,
+  IncomeExpenditureObligationsResponse,
+} from './hmrc-obligations.types';
+import type { GetCrystallisationObligationsQueryDto } from './dto/get-crystallisation-obligations-query.dto';
+import { crystallisationTaxYearParam } from './dto/get-crystallisation-obligations-query.dto';
+import type { GetIncomeExpenditureObligationsQueryDto } from './dto/get-income-expenditure-obligations-query.dto';
 import { itsaErrorToUserMessage } from './hmrc-itsa-errors.util';
 import { businessErrorToUserMessage } from './hmrc-business-errors.util';
+import { obligationsErrorToUserMessage } from './hmrc-obligations-errors.util';
 import { normalizeTaxYear } from './tax-year.util';
 
 /** HMRC POST /relationships result. */
@@ -34,7 +42,7 @@ type HmrcRelationshipResult = 'active' | 'inactive';
 
 /** Invitation statuses that won't change — no need to poll HMRC again. */
 const TERMINAL_INVITATION_STATUSES = new Set([
-  // 'accepted',
+  'accepted',
   'rejected',
   'expired',
   'cancelled',
@@ -445,7 +453,110 @@ export class ClientsService {
     return this.fetchHmrcBusinessJson(url, accessToken, fraudContext, businessErrorToUserMessage);
   }
 
+  /**
+   * Quarterly income & expenditure obligations (Obligations MTD v3.0).
+   * GET /obligations/details/{nino}/income-and-expenditure
+   */
+  async getIncomeAndExpenditureObligations(
+    tenantId: string,
+    clientId: string,
+    query: GetIncomeExpenditureObligationsQueryDto,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<IncomeExpenditureObligationsResponse> {
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+
+    if (query.businessId && !query.typeOfBusiness) {
+      throw new BadRequestException(
+        'typeOfBusiness is required when filtering obligations by businessId.',
+      );
+    }
+    if ((query.fromDate && !query.toDate) || (!query.fromDate && query.toDate)) {
+      throw new BadRequestException('Both fromDate and toDate must be provided together.');
+    }
+
+    const params = new URLSearchParams();
+    if (query.typeOfBusiness) params.set('typeOfBusiness', query.typeOfBusiness);
+    if (query.businessId) params.set('businessId', query.businessId);
+    if (query.fromDate) params.set('fromDate', query.fromDate);
+    if (query.toDate) params.set('toDate', query.toDate);
+    if (query.status) params.set('status', query.status);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+
+    const url =
+      `${this.hmrcBaseUrl}/obligations/details/` +
+      `${encodeURIComponent(client.nino)}/income-and-expenditure${qs}`;
+
+    const data = await this.fetchHmrcObligationsJson<IncomeExpenditureObligationsResponse>(
+      url,
+      accessToken,
+      fraudContext,
+    );
+    return { obligations: data.obligations ?? [] };
+  }
+
+  /**
+   * Final declaration (crystallisation) obligations (Obligations MTD v3.0).
+   * GET /obligations/details/{nino}/crystallisation
+   */
+  async getCrystallisationObligations(
+    tenantId: string,
+    clientId: string,
+    query: GetCrystallisationObligationsQueryDto,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<CrystallisationObligationsResponse> {
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+
+    const params = new URLSearchParams();
+    const taxYear = crystallisationTaxYearParam(query.taxYear);
+    if (taxYear) params.set('taxYear', taxYear);
+    if (query.status) params.set('status', query.status);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+
+    const url =
+      `${this.hmrcBaseUrl}/obligations/details/` +
+      `${encodeURIComponent(client.nino)}/crystallisation${qs}`;
+
+    const data = await this.fetchHmrcObligationsJson<CrystallisationObligationsResponse>(
+      url,
+      accessToken,
+      fraudContext,
+    );
+    return { obligations: data.obligations ?? [] };
+  }
+
   // ─── Private helpers ──────────────────────────────────────────────────────
+
+  private async fetchHmrcObligationsJson<T>(
+    url: string,
+    accessToken: string,
+    fraudContext: HmrcFraudRequestContext | null | undefined,
+  ): Promise<T> {
+    let res: Response;
+    try {
+      res = await this.hmrcApiClient.fetch(url, {
+        accessToken,
+        fraudContext,
+        headers: { Accept: 'application/vnd.hmrc.3.0+json' },
+      });
+    } catch (err) {
+      this.logger.error(`HMRC obligations network error: ${url}`, err);
+      throw new InternalServerErrorException('Failed to contact HMRC for obligations.');
+    }
+
+    const text = await res.text();
+    if (!res.ok) {
+      this.logger.warn(`HMRC obligations ${res.status}: ${text}`);
+      throw new BadRequestException(obligationsErrorToUserMessage(res.status, text));
+    }
+
+    try {
+      return text ? (JSON.parse(text) as T) : ({} as T);
+    } catch {
+      throw new InternalServerErrorException('HMRC returned invalid JSON for obligations.');
+    }
+  }
 
   private async fetchHmrcBusinessJson<T>(
     url: string,
