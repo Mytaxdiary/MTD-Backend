@@ -35,6 +35,10 @@ import type { GetIncomeExpenditureObligationsQueryDto } from './dto/get-income-e
 import { itsaErrorToUserMessage } from './hmrc-itsa-errors.util';
 import { businessErrorToUserMessage } from './hmrc-business-errors.util';
 import { obligationsErrorToUserMessage } from './hmrc-obligations-errors.util';
+import type { BalanceAndTransactionsResponse } from './hmrc-accounts.types';
+import type { GetBalanceAndTransactionsQueryDto } from './dto/get-balance-and-transactions-query.dto';
+import { defaultAccountsDateRange } from './dto/get-balance-and-transactions-query.dto';
+import { accountsErrorToUserMessage } from './hmrc-accounts-errors.util';
 import { normalizeTaxYear } from './tax-year.util';
 
 /** HMRC POST /relationships result. */
@@ -526,7 +530,89 @@ export class ClientsService {
     return { obligations: data.obligations ?? [] };
   }
 
+  /**
+   * Self Assessment balance and transactions (SA Accounts MTD v4.0).
+   * GET /accounts/self-assessment/{nino}/balance-and-transactions
+   */
+  async getBalanceAndTransactions(
+    tenantId: string,
+    clientId: string,
+    query: GetBalanceAndTransactionsQueryDto,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<BalanceAndTransactionsResponse> {
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+
+    const onlyOpenItems = query.onlyOpenItems === true;
+    let fromDate = query.fromDate;
+    let toDate = query.toDate;
+
+    if (!onlyOpenItems && !query.docNumber?.trim() && (!fromDate || !toDate)) {
+      const defaults = defaultAccountsDateRange();
+      fromDate = defaults.fromDate;
+      toDate = defaults.toDate;
+    }
+
+    if ((fromDate && !toDate) || (!fromDate && toDate)) {
+      throw new BadRequestException('Both fromDate and toDate must be provided together.');
+    }
+
+    const params = new URLSearchParams();
+    if (query.docNumber) params.set('docNumber', query.docNumber);
+    if (fromDate) params.set('fromDate', fromDate);
+    if (toDate) params.set('toDate', toDate);
+    if (onlyOpenItems) params.set('onlyOpenItems', 'true');
+    if (query.calculateAccruedInterest !== false) {
+      params.set('calculateAccruedInterest', 'true');
+    }
+    if (query.includeLocks === true) params.set('includeLocks', 'true');
+    if (query.customerPaymentInformation === true) {
+      params.set('customerPaymentInformation', 'true');
+    }
+    const qs = params.toString() ? `?${params.toString()}` : '';
+
+    const url =
+      `${this.hmrcBaseUrl}/accounts/self-assessment/` +
+      `${encodeURIComponent(client.nino)}/balance-and-transactions${qs}`;
+
+    return this.fetchHmrcAccountsJson<BalanceAndTransactionsResponse>(
+      url,
+      accessToken,
+      fraudContext,
+    );
+  }
+
   // ─── Private helpers ──────────────────────────────────────────────────────
+
+  private async fetchHmrcAccountsJson<T>(
+    url: string,
+    accessToken: string,
+    fraudContext: HmrcFraudRequestContext | null | undefined,
+  ): Promise<T> {
+    let res: Response;
+    try {
+      res = await this.hmrcApiClient.fetch(url, {
+        accessToken,
+        fraudContext,
+        headers: { Accept: 'application/vnd.hmrc.4.0+json' },
+      });
+    } catch (err) {
+      this.logger.error(`HMRC SA accounts network error: ${url}`, err);
+      throw new InternalServerErrorException('Failed to contact HMRC for account transactions.');
+    }
+
+    const text = await res.text();
+    if (!res.ok) {
+      this.logger.warn(`HMRC SA accounts ${res.status}: ${text}`);
+      throw new BadRequestException(accountsErrorToUserMessage(res.status, text));
+    }
+
+    try {
+      return text ? (JSON.parse(text) as T) : ({} as T);
+    } catch {
+      throw new InternalServerErrorException('HMRC returned invalid JSON for account transactions.');
+    }
+  }
 
   private async fetchHmrcObligationsJson<T>(
     url: string,

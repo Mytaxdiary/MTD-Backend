@@ -8,6 +8,7 @@ import { ResendInvitationDto } from './dto/resend-invitation.dto';
 import { GetItsaStatusQueryDto } from './dto/get-itsa-status-query.dto';
 import { GetIncomeExpenditureObligationsQueryDto } from './dto/get-income-expenditure-obligations-query.dto';
 import { GetCrystallisationObligationsQueryDto } from './dto/get-crystallisation-obligations-query.dto';
+import { GetBalanceAndTransactionsQueryDto } from './dto/get-balance-and-transactions-query.dto';
 import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
 
 interface RequestUser {
@@ -150,6 +151,23 @@ export class ClientsController {
   ) {
     const { tenantId } = req.user as RequestUser;
     return this.clientsService.getCrystallisationObligations(
+      tenantId,
+      id,
+      query,
+      this.fraudContext(req),
+    );
+  }
+
+  /** SA Accounts balance and transactions (v4.0) */
+  @Get(':id/liabilities/balance-and-transactions')
+  @ApiOperation({ summary: 'Retrieve HMRC SA balance and transactions for a client' })
+  async getBalanceAndTransactions(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Query() query: GetBalanceAndTransactionsQueryDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getBalanceAndTransactions(
       tenantId,
       id,
       query,
