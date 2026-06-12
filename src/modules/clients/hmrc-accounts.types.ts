@@ -36,3 +36,31 @@ export interface BalanceAndTransactionsResponse {
   codingDetails?: unknown[];
   financialDetails?: unknown[];
 }
+
+/** HMRC SA Accounts v4.0 — List Payments & Allocation Details */
+export interface HmrcPaymentAllocation {
+  chargeReference?: string;
+  chargeDetail?: {
+    documentId?: string;
+    chargeTypeDescription?: string;
+  };
+  startDate?: string;
+  endDate?: string;
+  dueDate?: string;
+  amount?: number;
+  clearedAmount?: number;
+}
+
+export interface HmrcPayment {
+  paymentLot?: string;
+  paymentLotItem?: string;
+  paymentReference?: string;
+  paymentAmount?: number;
+  paymentMethod?: string;
+  transactionDate?: string;
+  allocations?: HmrcPaymentAllocation[];
+}
+
+export interface PaymentsAndAllocationsResponse {
+  payments: HmrcPayment[];
+}

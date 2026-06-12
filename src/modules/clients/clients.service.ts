@@ -35,9 +35,14 @@ import type { GetIncomeExpenditureObligationsQueryDto } from './dto/get-income-e
 import { itsaErrorToUserMessage } from './hmrc-itsa-errors.util';
 import { businessErrorToUserMessage } from './hmrc-business-errors.util';
 import { obligationsErrorToUserMessage } from './hmrc-obligations-errors.util';
-import type { BalanceAndTransactionsResponse } from './hmrc-accounts.types';
+import type {
+  BalanceAndTransactionsResponse,
+  PaymentsAndAllocationsResponse,
+} from './hmrc-accounts.types';
 import type { GetBalanceAndTransactionsQueryDto } from './dto/get-balance-and-transactions-query.dto';
 import { defaultAccountsDateRange } from './dto/get-balance-and-transactions-query.dto';
+import type { GetPaymentsAndAllocationsQueryDto } from './dto/get-payments-and-allocations-query.dto';
+import { defaultPaymentsDateRange } from './dto/get-payments-and-allocations-query.dto';
 import { accountsErrorToUserMessage } from './hmrc-accounts-errors.util';
 import { normalizeTaxYear } from './tax-year.util';
 
@@ -580,6 +585,38 @@ export class ClientsService {
       accessToken,
       fraudContext,
     );
+  }
+
+  /**
+   * List SA payment history and allocation details (SA Accounts MTD v4.0).
+   * GET /accounts/self-assessment/{nino}/payments-and-allocations
+   */
+  async getPaymentsAndAllocations(
+    tenantId: string,
+    clientId: string,
+    query: GetPaymentsAndAllocationsQueryDto,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<PaymentsAndAllocationsResponse> {
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+
+    const fromDate = query.fromDate ?? defaultPaymentsDateRange().fromDate;
+    const toDate = query.toDate ?? defaultPaymentsDateRange().toDate;
+
+    const params = new URLSearchParams({ fromDate, toDate });
+    if (query.paymentLot) params.set('paymentLot', query.paymentLot);
+    if (query.paymentLotItem) params.set('paymentLotItem', query.paymentLotItem);
+
+    const url =
+      `${this.hmrcBaseUrl}/accounts/self-assessment/` +
+      `${encodeURIComponent(client.nino)}/payments-and-allocations?${params.toString()}`;
+
+    const data = await this.fetchHmrcAccountsJson<PaymentsAndAllocationsResponse>(
+      url,
+      accessToken,
+      fraudContext,
+    );
+    return { payments: data.payments ?? [] };
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
 import { HmrcModule } from './modules/hmrc/hmrc.module';
 import { ClientsModule } from './modules/clients/clients.module';
+import { ChaseTemplatesModule } from './modules/chase-templates/chase-templates.module';
 import hmrcConfig from './config/hmrc.config';
 
 @Module({
@@ -65,6 +66,7 @@ import hmrcConfig from './config/hmrc.config';
     TenantsModule,
     HmrcModule,
     ClientsModule,
+    ChaseTemplatesModule,
   ],
   controllers: [AppController],
   providers: [

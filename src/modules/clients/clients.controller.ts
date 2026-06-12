@@ -9,6 +9,7 @@ import { GetItsaStatusQueryDto } from './dto/get-itsa-status-query.dto';
 import { GetIncomeExpenditureObligationsQueryDto } from './dto/get-income-expenditure-obligations-query.dto';
 import { GetCrystallisationObligationsQueryDto } from './dto/get-crystallisation-obligations-query.dto';
 import { GetBalanceAndTransactionsQueryDto } from './dto/get-balance-and-transactions-query.dto';
+import { GetPaymentsAndAllocationsQueryDto } from './dto/get-payments-and-allocations-query.dto';
 import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
 
 interface RequestUser {
@@ -168,6 +169,23 @@ export class ClientsController {
   ) {
     const { tenantId } = req.user as RequestUser;
     return this.clientsService.getBalanceAndTransactions(
+      tenantId,
+      id,
+      query,
+      this.fraudContext(req),
+    );
+  }
+
+  /** SA Accounts payment history and allocations (v4.0) */
+  @Get(':id/liabilities/payments-and-allocations')
+  @ApiOperation({ summary: 'List HMRC SA payments and allocation details for a client' })
+  async getPaymentsAndAllocations(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Query() query: GetPaymentsAndAllocationsQueryDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getPaymentsAndAllocations(
       tenantId,
       id,
       query,
