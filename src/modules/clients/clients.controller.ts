@@ -16,6 +16,8 @@ interface RequestUser {
   userId: string;
   email: string;
   tenantId: string;
+  loginAt?: number;
+  mfaAuthenticated?: boolean;
 }
 
 @ApiTags('Clients')
@@ -26,8 +28,8 @@ export class ClientsController {
   constructor(private readonly clientsService: ClientsService) {}
 
   private fraudContext(req: ExpressRequest) {
-    const { email } = req.user as RequestUser;
-    return buildHmrcFraudRequestContext(req, email);
+    const u = req.user as RequestUser;
+    return buildHmrcFraudRequestContext(req, u.email, u.loginAt, u.mfaAuthenticated);
   }
 
   /** Create client + send HMRC invitation + send notification email */

@@ -12,6 +12,8 @@ export interface JwtPayload {
   sub: string;
   email: string;
   tenantId: string;
+  /** True when the user completed a TOTP challenge in this session. */
+  mfaAuthenticated?: boolean;
   iat?: number;
   exp?: number;
 }
@@ -20,6 +22,10 @@ export interface RequestUser {
   userId: string;
   email: string;
   tenantId: string;
+  /** Mirrors JWT iat — Unix timestamp (seconds) of when the token was issued. */
+  loginAt?: number;
+  /** True when TOTP was verified during this login. */
+  mfaAuthenticated?: boolean;
 }
 
 /** Cookie name shared with the frontend tokenStorage constants. */
@@ -50,6 +56,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user || !user.isActive) {
       throw new UnauthorizedException('User no longer exists');
     }
-    return { userId: payload.sub, email: payload.email, tenantId: payload.tenantId };
+    return {
+      userId: payload.sub,
+      email: payload.email,
+      tenantId: payload.tenantId,
+      loginAt: payload.iat,
+      mfaAuthenticated: payload.mfaAuthenticated ?? false,
+    };
   }
 }

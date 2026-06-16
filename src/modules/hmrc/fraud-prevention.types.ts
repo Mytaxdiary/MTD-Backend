@@ -27,6 +27,10 @@ export interface HmrcFraudRequestContext {
   userEmail: string;
   clientPublicIp?: string;
   clientPublicPort?: string;
+  /** Unix timestamp (seconds) when the user's JWT was issued — used as Gov-Client-Multi-Factor timestamp. */
+  loginAt?: number;
+  /** True when the user completed a TOTP challenge in this session. */
+  mfaAuthenticated?: boolean;
 }
 
 export interface FraudPreventionValidationResult {

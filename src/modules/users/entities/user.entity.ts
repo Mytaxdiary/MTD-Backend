@@ -34,6 +34,13 @@ export class User extends BaseEntity {
   @Column({ name: 'last_login_at', type: 'datetime', nullable: true })
   lastLoginAt?: Date;
 
+  @Column({ name: 'mfa_enabled', type: 'boolean', default: false })
+  mfaEnabled: boolean;
+
+  /** AES-256-GCM encrypted TOTP secret (iv:authTag:ciphertext) or plain secret in dev. */
+  @Column({ name: 'totp_secret', type: 'varchar', length: 500, nullable: true })
+  totpSecret?: string;
+
   @ManyToOne(() => Role, { eager: true, nullable: true })
   @JoinColumn({ name: 'role_id' })
   role?: Role;

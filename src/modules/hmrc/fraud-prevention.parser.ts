@@ -52,6 +52,8 @@ export function resolveClientIp(
 export function buildHmrcFraudRequestContext(
   req: Request,
   userEmail: string,
+  loginAt?: number,
+  mfaAuthenticated?: boolean,
 ): HmrcFraudRequestContext {
   const client = parseFraudClientPayload(req);
   return {
@@ -59,5 +61,7 @@ export function buildHmrcFraudRequestContext(
     userEmail,
     clientPublicIp: resolveClientIp(req, client),
     clientPublicPort: client?.publicPort,
+    loginAt,
+    mfaAuthenticated: mfaAuthenticated ?? false,
   };
 }

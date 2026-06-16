@@ -13,12 +13,18 @@ export interface AuthUserResponse {
   firmName: string;
   isEmailVerified: boolean;
   tenantId: string | null;
+  mfaEnabled?: boolean;
 }
 
 export interface AuthResponse {
   accessToken: string;
   refreshToken: string;
+  accessTokenExpiresAt: string;
   user: AuthUserResponse;
+  /** True when the user has MFA enabled — full tokens are NOT issued yet. */
+  requiresMfa?: boolean;
+  /** Short-lived JWT exchanged for full tokens after TOTP verification. */
+  mfaToken?: string;
 }
 
 export interface TokensResponse {

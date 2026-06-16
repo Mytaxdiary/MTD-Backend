@@ -116,7 +116,8 @@ export class HmrcController {
   @ApiOperation({ summary: 'Validate HMRC fraud prevention headers for the current session' })
   async validateFraudHeaders(@Request() req: ExpressRequest) {
     const tenantId = this.getTenantId(req);
-    const fraudContext = buildHmrcFraudRequestContext(req, this.getUserEmail(req));
+    const u = req.user as { email?: string; loginAt?: number; mfaAuthenticated?: boolean };
+    const fraudContext = buildHmrcFraudRequestContext(req, u.email ?? '', u.loginAt, u.mfaAuthenticated);
     const result = await this.hmrcService.validateFraudHeaders(tenantId, fraudContext);
     const summary = summarizeFraudValidation(result);
     return { ...summary, ...result };

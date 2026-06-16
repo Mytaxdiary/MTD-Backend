@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
+import { authenticator } from 'otplib';
 import { UsersService } from '../users/users.service';
 import { TenantsService } from '../tenants/tenants.service';
 import { MailService } from '../mail/mail.service';
@@ -19,6 +20,7 @@ import { EmailVerificationToken } from './entities/email-verification-token.enti
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { hashPassword, comparePassword } from '../../common/helpers/crypto.helper';
+import { encrypt, decrypt, isEncrypted } from '../hmrc/crypto.util';
 import { User } from '../users/entities/user.entity';
 import type { AuthResponse, SessionResponse, TokensResponse } from './types/auth-response.type';
 import type { JwtPayload } from './strategies/jwt.strategy';
@@ -72,7 +74,7 @@ export class AuthService {
       tenantId: tenant.id,
     });
 
-    const tokens = await this.issueTokens(user.id, user.email, tenant.id);
+    const tokens = await this.issueTokens(user.id, user.email, tenant.id, false);
 
     // Send emails before returning — fire-and-forget fails on serverless (Vercel)
     try {
@@ -94,6 +96,7 @@ export class AuthService {
         email: user.email,
         firmName: user.firmName,
         isEmailVerified: user.isEmailVerified,
+        mfaEnabled: false,
         tenantId: tenant.id,
       },
     };
@@ -112,7 +115,6 @@ export class AuthService {
     if (!passwordMatch) throw invalidCredentials;
 
     await this.usersService.updateLastLogin(user.id);
-    const tokens = await this.issueTokens(user.id, user.email, user.tenantId ?? '');
 
     // If email not verified, silently resend verification email so user isn't stuck
     if (!user.isEmailVerified) {
@@ -123,6 +125,32 @@ export class AuthService {
       }
     }
 
+    // MFA gate — issue a short-lived challenge token instead of full access tokens
+    if (user.mfaEnabled && user.totpSecret) {
+      const mfaToken = this.jwtService.sign(
+        { sub: user.id, email: user.email, tenantId: user.tenantId ?? '', type: 'mfa_challenge' },
+        { expiresIn: '5m' },
+      );
+      return {
+        accessToken: '',
+        refreshToken: '',
+        accessTokenExpiresAt: '',
+        requiresMfa: true,
+        mfaToken,
+        user: {
+          id: user.id,
+          name: `${user.firstName} ${user.lastName}`,
+          email: user.email,
+          firmName: user.firmName,
+          isEmailVerified: user.isEmailVerified,
+          mfaEnabled: true,
+          tenantId: user.tenantId ?? null,
+        },
+      };
+    }
+
+    const tokens = await this.issueTokens(user.id, user.email, user.tenantId ?? '', false);
+
     return {
       ...tokens,
       user: {
@@ -131,6 +159,127 @@ export class AuthService {
         email: user.email,
         firmName: user.firmName,
         isEmailVerified: user.isEmailVerified,
+        mfaEnabled: user.mfaEnabled,
+        tenantId: user.tenantId ?? null,
+      },
+    };
+  }
+
+  // ── MFA ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Generates a TOTP secret and returns an otpauth:// URL for QR code display.
+   * Nothing is saved yet — the user must confirm with a code via enableMfa().
+   * Returns a short-lived setupToken (JWT) so the secret is passed securely
+   * when the user calls enableMfa().
+   */
+  async setupMfa(userId: string): Promise<{ secret: string; otpauthUrl: string; setupToken: string }> {
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException();
+
+    const secret = authenticator.generateSecret();
+    const otpauthUrl = authenticator.keyuri(user.email, 'NewEffect MTD', secret);
+
+    // Encode the secret in a short-lived JWT so no DB write is needed before confirmation
+    const encryptionKey = this.configService.get<string>('hmrc.encryptionKey');
+    const storedSecret = encryptionKey ? encrypt(secret, encryptionKey) : secret;
+
+    const setupToken = this.jwtService.sign(
+      { sub: userId, totpSecret: storedSecret, type: 'mfa_setup' },
+      { expiresIn: '10m' },
+    );
+
+    return { secret, otpauthUrl, setupToken };
+  }
+
+  /** Verifies the TOTP code against the setup token and permanently enables MFA. */
+  async enableMfa(userId: string, setupToken: string, code: string): Promise<void> {
+    let payload: { sub: string; totpSecret: string; type: string };
+    try {
+      payload = this.jwtService.verify(setupToken) as typeof payload;
+    } catch {
+      throw new BadRequestException('Setup session expired. Please start MFA setup again.');
+    }
+
+    if (payload.type !== 'mfa_setup' || payload.sub !== userId) {
+      throw new BadRequestException('Invalid setup token.');
+    }
+
+    const encryptionKey = this.configService.get<string>('hmrc.encryptionKey');
+    const plainSecret = encryptionKey && isEncrypted(payload.totpSecret)
+      ? decrypt(payload.totpSecret, encryptionKey)
+      : payload.totpSecret;
+
+    const isValid = authenticator.verify({ token: code, secret: plainSecret });
+    if (!isValid) {
+      throw new BadRequestException('Invalid code. Please try again.');
+    }
+
+    // Save encrypted secret and enable MFA
+    await this.usersService.setMfa(userId, payload.totpSecret, true);
+  }
+
+  /** Verifies password + TOTP code, then disables MFA for the account. */
+  async disableMfa(userId: string, password: string, code: string): Promise<void> {
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException();
+
+    const passwordMatch = await comparePassword(password, user.passwordHash);
+    if (!passwordMatch) throw new BadRequestException('Incorrect password.');
+
+    if (!user.mfaEnabled || !user.totpSecret) {
+      throw new BadRequestException('MFA is not enabled on this account.');
+    }
+
+    const encryptionKey = this.configService.get<string>('hmrc.encryptionKey');
+    const plainSecret = encryptionKey && isEncrypted(user.totpSecret)
+      ? decrypt(user.totpSecret, encryptionKey)
+      : user.totpSecret;
+
+    const isValid = authenticator.verify({ token: code, secret: plainSecret });
+    if (!isValid) throw new BadRequestException('Invalid code. Please try again.');
+
+    await this.usersService.setMfa(userId, null, false);
+  }
+
+  /** Verifies MFA challenge token + TOTP code, then issues full access/refresh tokens. */
+  async verifyMfaChallenge(mfaToken: string, code: string): Promise<AuthResponse> {
+    let payload: { sub: string; email: string; tenantId: string; type: string };
+    try {
+      payload = this.jwtService.verify(mfaToken) as typeof payload;
+    } catch {
+      throw new UnauthorizedException('MFA session expired. Please sign in again.');
+    }
+
+    if (payload.type !== 'mfa_challenge') {
+      throw new UnauthorizedException('Invalid MFA token.');
+    }
+
+    const user = await this.usersService.findById(payload.sub);
+    if (!user || !user.isActive) throw new UnauthorizedException('User not found.');
+    if (!user.mfaEnabled || !user.totpSecret) {
+      throw new BadRequestException('MFA is not configured for this account.');
+    }
+
+    const encryptionKey = this.configService.get<string>('hmrc.encryptionKey');
+    const plainSecret = encryptionKey && isEncrypted(user.totpSecret)
+      ? decrypt(user.totpSecret, encryptionKey)
+      : user.totpSecret;
+
+    const isValid = authenticator.verify({ token: code, secret: plainSecret });
+    if (!isValid) throw new UnauthorizedException('Invalid code. Please try again.');
+
+    const tokens = await this.issueTokens(user.id, user.email, user.tenantId ?? '', true);
+
+    return {
+      ...tokens,
+      user: {
+        id: user.id,
+        name: `${user.firstName} ${user.lastName}`,
+        email: user.email,
+        firmName: user.firmName,
+        isEmailVerified: user.isEmailVerified,
+        mfaEnabled: true,
         tenantId: user.tenantId ?? null,
       },
     };
@@ -211,6 +360,7 @@ export class AuthService {
       email: user.email,
       firmName: user.firmName,
       isEmailVerified: user.isEmailVerified,
+      mfaEnabled: user.mfaEnabled,
       tenantId: user.tenantId ?? null,
     };
   }
@@ -353,8 +503,13 @@ export class AuthService {
 
   // ── Private helpers ──────────────────────────────────────────────────────
 
-  private async issueTokens(userId: string, email: string, tenantId: string): Promise<TokensResponse> {
-    const payload: JwtPayload = { sub: userId, email, tenantId };
+  private async issueTokens(
+    userId: string,
+    email: string,
+    tenantId: string,
+    mfaAuthenticated = false,
+  ): Promise<TokensResponse> {
+    const payload: JwtPayload = { sub: userId, email, tenantId, mfaAuthenticated };
     const jwtExpiresIn = this.configService.get<string>('auth.jwtExpiresIn');
     const accessToken = this.jwtService.sign(payload, {
       expiresIn: jwtExpiresIn as `${number}${'s' | 'm' | 'h' | 'd'}`,

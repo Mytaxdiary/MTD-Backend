@@ -32,6 +32,9 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { LogoutDto } from './dto/refresh-token.dto';
+import { EnableMfaDto } from './dto/enable-mfa.dto';
+import { DisableMfaDto } from './dto/disable-mfa.dto';
+import { VerifyMfaDto } from './dto/verify-mfa.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { RequestUser } from './strategies/jwt.strategy';
 
@@ -73,6 +76,49 @@ export class AuthController {
   @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
     const result = await this.authService.login(dto);
+    // Only set cookies when full tokens were issued (no MFA challenge pending)
+    if (!result.requiresMfa) {
+      this.setAuthCookies(res, result.accessToken, result.refreshToken);
+    }
+    return result;
+  }
+
+  // ── MFA ───────────────────────────────────────────────────────────────────
+
+  @Get('mfa/setup')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Generate TOTP secret + QR URL for MFA setup' })
+  async mfaSetup(@Request() req: AuthRequest) {
+    return this.authService.setupMfa(req.user.userId);
+  }
+
+  @Post('mfa/enable')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Confirm TOTP code and enable MFA for this account' })
+  async mfaEnable(@Request() req: AuthRequest, @Body() dto: EnableMfaDto) {
+    await this.authService.enableMfa(req.user.userId, dto.setupToken, dto.code);
+    return { message: 'Two-step verification enabled.' };
+  }
+
+  @Post('mfa/disable')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify password + TOTP and disable MFA' })
+  async mfaDisable(@Request() req: AuthRequest, @Body() dto: DisableMfaDto) {
+    await this.authService.disableMfa(req.user.userId, dto.password, dto.code);
+    return { message: 'Two-step verification disabled.' };
+  }
+
+  @Post('mfa/verify')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Complete MFA login — exchange challenge token + TOTP code for full session' })
+  async mfaVerify(@Body() dto: VerifyMfaDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.authService.verifyMfaChallenge(dto.mfaToken, dto.code);
     this.setAuthCookies(res, result.accessToken, result.refreshToken);
     return result;
   }

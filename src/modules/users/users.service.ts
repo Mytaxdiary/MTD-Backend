@@ -61,6 +61,23 @@ export class UsersService {
     await this.userRepo.update(id, { isEmailVerified: true });
   }
 
+  /** Enable or disable MFA. Pass null totpSecret to clear it. */
+  async setMfa(id: string, totpSecret: string | null, mfaEnabled: boolean): Promise<void> {
+    await this.userRepo.update(id, {
+      mfaEnabled,
+      totpSecret: totpSecret ?? undefined,
+    });
+    if (!mfaEnabled) {
+      // Explicitly clear the secret when disabling
+      await this.userRepo
+        .createQueryBuilder()
+        .update(User)
+        .set({ totpSecret: () => 'NULL' })
+        .where('id = :id', { id })
+        .execute();
+    }
+  }
+
   /**
    * Permanently removes the user. Auth tokens cascade on user delete.
    * If this was the last user on the tenant, also removes clients, HMRC connection,
