@@ -45,6 +45,7 @@ import type { GetPaymentsAndAllocationsQueryDto } from './dto/get-payments-and-a
 import { defaultPaymentsDateRange } from './dto/get-payments-and-allocations-query.dto';
 import { accountsErrorToUserMessage } from './hmrc-accounts-errors.util';
 import { normalizeTaxYear } from './tax-year.util';
+import { piiHash } from '../../common/utils/pii-hash.util';
 
 /** HMRC POST /relationships result. */
 type HmrcRelationshipResult = 'active' | 'inactive';
@@ -132,6 +133,7 @@ export class ClientsService {
       tenantId,
       name: dto.name,
       nino: ninoClean,
+      ninoHash: piiHash(ninoClean),
       postcode: dto.postcode.trim().toUpperCase(),
       email: dto.email,
       phone: dto.phone,
@@ -919,7 +921,7 @@ export class ClientsService {
   }
 
   private async findByNino(tenantId: string, nino: string): Promise<Client | null> {
-    return this.clientRepo.findOne({ where: { tenantId, nino } });
+    return this.clientRepo.findOne({ where: { tenantId, ninoHash: piiHash(nino) } });
   }
 
   /** HMRC may return Pending, Accepted, PartialAuth, etc. — store lowercase hyphenated values. */

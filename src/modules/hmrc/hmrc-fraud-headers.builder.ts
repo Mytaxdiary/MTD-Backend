@@ -120,23 +120,21 @@ export class HmrcFraudHeadersBuilder {
       headers['Gov-Client-User-IDs'] = `my-application=${pct(ctx.userEmail)}`;
     }
 
-    // Gov-Client-Multi-Factor — always include PASSWORD; add TOTP when MFA was used
-    const loginTimestamp = ctx.loginAt
-      ? new Date(ctx.loginAt * 1000).toISOString()
-      : new Date().toISOString();
-    const uniqueRef = ctx.userEmail
-      ? pct(`${ctx.userEmail.slice(0, 8)}_${ctx.loginAt ?? Date.now()}`)
-      : pct(`session_${Date.now()}`);
-
-    const factors: string[] = [
-      `type=PASSWORD&timestamp=${loginTimestamp}&uniqueRef=${uniqueRef}`,
-    ];
+    // Gov-Client-Multi-Factor — only set when a second factor (TOTP) was used.
+    // PASSWORD is not a valid MFA type for this header; omitting is preferable to sending invalid data.
     if (ctx.mfaAuthenticated) {
-      factors.push(
-        `type=SOFTWARE_TOTP_TOKEN&timestamp=${loginTimestamp}&uniqueRef=${uniqueRef}_totp`,
+      const loginTimestamp = pct(
+        ctx.loginAt
+          ? new Date(ctx.loginAt * 1000).toISOString()
+          : new Date().toISOString(),
       );
+      const uniqueRef = ctx.userEmail
+        ? pct(`${ctx.userEmail.slice(0, 8)}_${ctx.loginAt ?? Date.now()}`)
+        : pct(`session_${Date.now()}`);
+
+      headers['Gov-Client-Multi-Factor'] =
+        `type=TOTP&timestamp=${loginTimestamp}&unique-reference=${uniqueRef}`;
     }
-    headers['Gov-Client-Multi-Factor'] = factors.join(',');
 
     return headers;
   }

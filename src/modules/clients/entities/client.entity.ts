@@ -1,12 +1,14 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../../database/base.entity';
 import { Tenant } from '../../tenants/entities/tenant.entity';
+import { piiTransformer } from '../../../common/transformers/pii-column.transformer';
 
 /** HMRC invitation status — any value returned by the API (not a fixed enum). */
 export type InvitationStatus = string;
 
 @Entity('clients')
-@Index('UQ_clients_tenant_nino', ['tenantId', 'nino'], { unique: true })
+// Unique per-tenant per-NINO enforced via deterministic HMAC hash (plaintext NINO is encrypted).
+@Index('UQ_clients_tenant_nino_hash', ['tenantId', 'ninoHash'], { unique: true })
 export class Client extends BaseEntity {
   @ManyToOne(() => Tenant, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'tenant_id' })
@@ -15,19 +17,31 @@ export class Client extends BaseEntity {
   @Column({ name: 'tenant_id', type: 'varchar', length: 36 })
   tenantId: string;
 
-  @Column({ name: 'name', type: 'varchar', length: 200 })
+  /** Encrypted at rest — AES-256-GCM via piiTransformer. */
+  @Column({ name: 'name', type: 'varchar', length: 500, transformer: piiTransformer() })
   name: string;
 
-  @Column({ name: 'nino', type: 'varchar', length: 10 })
+  /** Encrypted at rest. Use ninoHash for DB queries / unique checks. */
+  @Column({ name: 'nino', type: 'varchar', length: 500, transformer: piiTransformer() })
   nino: string;
 
-  @Column({ name: 'postcode', type: 'varchar', length: 20 })
+  /**
+   * Deterministic HMAC-SHA256 of the uppercase NINO.
+   * Never exposed in API responses — used only for uniqueness enforcement.
+   */
+  @Column({ name: 'nino_hash', type: 'varchar', length: 64 })
+  ninoHash: string;
+
+  /** Encrypted at rest. */
+  @Column({ name: 'postcode', type: 'varchar', length: 500, transformer: piiTransformer() })
   postcode: string;
 
-  @Column({ name: 'email', type: 'varchar', length: 255 })
+  /** Encrypted at rest. */
+  @Column({ name: 'email', type: 'varchar', length: 500, transformer: piiTransformer() })
   email: string;
 
-  @Column({ name: 'phone', type: 'varchar', length: 30, nullable: true })
+  /** Encrypted at rest. */
+  @Column({ name: 'phone', type: 'varchar', length: 500, nullable: true, transformer: piiTransformer(true) })
   phone?: string;
 
   @Column({ name: 'agent_type', type: 'varchar', length: 20, default: 'main' })
