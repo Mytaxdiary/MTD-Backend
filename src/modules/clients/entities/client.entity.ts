@@ -66,4 +66,12 @@ export class Client extends BaseEntity {
 
   @Column({ name: 'authorised_at', type: 'datetime', nullable: true })
   authorisedAt?: Date;
+
+  /**
+   * How this client's bookkeeping is handled.
+   * 'bookkeeping' = client uses Xero/QBO themselves (we chase to confirm completion).
+   * 'data-request' = client sends raw data to us (we chase for bank statements/receipts).
+   */
+  @Column({ name: 'workflow_type', type: 'varchar', length: 20, nullable: true, default: null })
+  workflowType?: string;
 }

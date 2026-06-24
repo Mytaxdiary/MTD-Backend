@@ -70,6 +70,17 @@ export class MailService {
     );
   }
 
+  async sendChaseEmail(to: string, subject: string, body: string): Promise<void> {
+    // body is plain text (templates use \n line breaks); convert to basic HTML
+    const html = `<div style="font-family:sans-serif;font-size:14px;line-height:1.6;color:#1E293B">
+${body
+  .split('\n')
+  .map((l) => (l.trim() === '' ? '<br>' : `<p style="margin:0 0 8px">${l}</p>`))
+  .join('\n')}
+</div>`;
+    await this.send(to, subject, html, body);
+  }
+
   async sendClientInvitationEmail(data: ClientInvitationEmailData): Promise<void> {
     await this.send(
       data.to,

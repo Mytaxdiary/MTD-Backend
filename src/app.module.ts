@@ -17,6 +17,8 @@ import { TenantsModule } from './modules/tenants/tenants.module';
 import { HmrcModule } from './modules/hmrc/hmrc.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { ChaseTemplatesModule } from './modules/chase-templates/chase-templates.module';
+import { ChaseLogsModule } from './modules/chase-logs/chase-logs.module';
+import { ChaseModule } from './modules/chase/chase.module';
 import hmrcConfig from './config/hmrc.config';
 
 @Module({
@@ -67,6 +69,8 @@ import hmrcConfig from './config/hmrc.config';
     HmrcModule,
     ClientsModule,
     ChaseTemplatesModule,
+    ChaseLogsModule,
+    ChaseModule,
   ],
   controllers: [AppController],
   providers: [
