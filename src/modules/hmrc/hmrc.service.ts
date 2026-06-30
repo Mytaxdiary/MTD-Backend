@@ -265,16 +265,23 @@ export class HmrcService {
       { serviceNames: ['agent-services'] },
     );
 
-    const individualRaw = await this.createSandboxTestUser<HmrcSandboxIndividualRaw>(
-      '/create-test-user/individuals',
-      accessToken,
-      { serviceNames: ['national-insurance', 'mtd-income-tax'] },
-    );
-    const individual = this.normalizeSandboxIndividual(individualRaw);
+    // Create 5 individuals sequentially — used for single-client flow (first) + bulk import CSV (all 5)
+    const individuals: HmrcSandboxIndividualUser[] = [];
+    for (let i = 0; i < 5; i++) {
+      const raw = await this.createSandboxTestUser<HmrcSandboxIndividualRaw>(
+        '/create-test-user/individuals',
+        accessToken,
+        { serviceNames: ['national-insurance', 'mtd-income-tax'] },
+      );
+      individuals.push(this.normalizeSandboxIndividual(raw));
+    }
+
+    const individual = individuals[0];
 
     return {
       agent,
       individual,
+      individuals,
       nextSteps: [
         `Connect HMRC below using the agent User ID (${agent.userId}) and password.`,
         `After connecting, save ARN ${agent.agentServicesAccountNumber} in the ARN field.`,

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { MulterModule } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { Client } from './entities/client.entity';
 import { ClientsService } from './clients.service';
 import { ClientsController } from './clients.controller';
@@ -12,6 +14,7 @@ import { Tenant } from '../tenants/entities/tenant.entity';
     TypeOrmModule.forFeature([Client, Tenant]),
     HmrcModule,
     MailModule,
+    MulterModule.register({ storage: memoryStorage() }),
   ],
   controllers: [ClientsController],
   providers: [ClientsService],

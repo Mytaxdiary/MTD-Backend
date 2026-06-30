@@ -10,32 +10,32 @@ const DEFAULT_TEMPLATES: Omit<CreateChaseTemplateDto, never>[] = [
   {
     type: 'bookkeeping',
     name: 'Bookkeeping reminder',
-    subject: 'Quarterly bookkeeping needed — {business}',
+    subject: 'Quarterly bookkeeping needed: {business}',
     body: "Hi {name},\n\nJust a reminder that your {quarter} quarterly records are due by {deadline}. Please complete your bookkeeping in your accounting software and let us know when it's ready for us to review.\n\nIf you need any help, just reply to this email.\n\nBest regards,\n{agent_name}",
   },
   {
     type: 'bookkeeping',
     name: 'Bookkeeping overdue',
-    subject: 'Action required: overdue bookkeeping — {business}',
+    subject: 'Action required: overdue bookkeeping for {business}',
     body: 'Hi {name},\n\nThe deadline for your {quarter} quarterly update has passed. Please complete your bookkeeping as soon as possible so we can review and ensure your records are up to date with HMRC.\n\nBest regards,\n{agent_name}',
   },
   {
     type: 'data-request',
-    name: 'Data request — gentle',
-    subject: 'Quarterly records needed — {business}',
+    name: 'Data request (gentle)',
+    subject: 'Quarterly records needed: {business}',
     body: 'Hi {name},\n\nWe need your income and expense records for {quarter} (due {deadline}). Please send us your bank statements, invoices, and receipts for the period.\n\nYou can reply to this email with attachments, or upload files directly in your portal.\n\nBest regards,\n{agent_name}',
   },
   {
     type: 'data-request',
-    name: 'Data request — urgent',
-    subject: 'Urgent: records overdue — {business}',
-    body: 'Hi {name},\n\nYour {quarter} records are now overdue. We need your bank statements and receipts urgently to submit your quarterly update to HMRC.\n\nPlease send everything you have as soon as possible.\n\nBest regards,\n{agent_name}',
+    name: 'Data request (urgent)',
+    subject: 'Urgent: records overdue for {business}',
+    body: 'Hi {name},\n\nYour {quarter} records are now overdue. We need your bank statements and receipts urgently to update your HMRC records.\n\nPlease send everything you have as soon as possible.\n\nBest regards,\n{agent_name}',
   },
   {
     type: 'general',
     name: 'Welcome / onboarding',
-    subject: 'Welcome to {firm_name} — getting started',
-    body: "Hi {name},\n\nWelcome! We're looking forward to helping you with your Making Tax Digital obligations.\n\nYou'll receive a separate email from HMRC asking you to authorise us as your agent. Please accept this — it allows us to manage your quarterly updates.\n\nBest regards,\n{agent_name}",
+    subject: 'Welcome to {firm_name}',
+    body: "Hi {name},\n\nWelcome! We're looking forward to helping you with your Making Tax Digital obligations.\n\nYou'll receive a separate email from HMRC asking you to authorise us as your agent. Please accept this request so we can manage your quarterly updates.\n\nBest regards,\n{agent_name}",
   },
 ];
 

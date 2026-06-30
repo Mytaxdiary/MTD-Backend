@@ -1,5 +1,18 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  Request,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ClientsService } from './clients.service';
@@ -209,5 +222,34 @@ export class ClientsController {
   async acceptInvitationSandbox(@Request() req: ExpressRequest, @Param('id') id: string) {
     const { tenantId } = req.user as RequestUser;
     return this.clientsService.acceptInvitationSandbox(tenantId, id, this.fraudContext(req));
+  }
+
+  /** Bulk CSV import — validates all rows first; creates clients + sends invitations only if clean */
+  @Post('import')
+  @ApiOperation({ summary: 'Bulk import clients from a CSV file' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB max
+      fileFilter: (_req, file, cb) => {
+        if (!file.originalname.match(/\.(csv|txt)$/i)) {
+          return cb(new BadRequestException('Only .csv files are accepted'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async bulkImport(
+    @Request() req: ExpressRequest,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('No file uploaded. Please attach a CSV file.');
+    const { tenantId, email } = req.user as RequestUser;
+    return this.clientsService.bulkImport(
+      tenantId,
+      email,
+      file.buffer,
+      this.fraudContext(req),
+    );
   }
 }

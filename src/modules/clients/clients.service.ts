@@ -5,10 +5,13 @@ import {
   ConflictException,
   NotFoundException,
   InternalServerErrorException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { QueryFailedError, Repository } from 'typeorm';
+import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { parseCsvBuffer, validateRows } from './bulk-import.util';
+import type { BulkImportSuccess } from './dto/bulk-import-client.dto';
 import { Client } from './entities/client.entity';
 import { CreateClientDto } from './dto/create-client.dto';
 import { HmrcService } from '../hmrc/hmrc.service';
@@ -83,6 +86,7 @@ export class ClientsService {
     private readonly hmrcService: HmrcService,
     private readonly hmrcApiClient: HmrcApiClient,
     private readonly mailService: MailService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /** HMRC API base URL — from HMRC_BASE_URL in .env (same as HmrcService). */
@@ -1044,5 +1048,79 @@ export class ClientsService {
     }
 
     return invitationId;
+  }
+
+  // ─── Bulk CSV import ───────────────────────────────────────────────────────
+
+  /**
+   * Parses a CSV buffer, validates ALL rows, and — only if every row is valid —
+   * creates all clients in a single DB transaction then sends HMRC invitations.
+   */
+  async bulkImport(
+    tenantId: string,
+    agentEmail: string,
+    fileBuffer: Buffer,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<BulkImportSuccess> {
+    // 1. Parse CSV
+    let rows;
+    try {
+      rows = parseCsvBuffer(fileBuffer);
+    } catch (err) {
+      throw new BadRequestException(
+        `Could not parse the CSV file. Make sure it matches the template format. (${(err as Error).message})`,
+      );
+    }
+
+    if (rows.length === 0) {
+      throw new BadRequestException('The uploaded file contains no data rows.');
+    }
+
+    if (rows.length > 200) {
+      throw new BadRequestException('A single import can contain at most 200 clients. Split the file and import in batches.');
+    }
+
+    // 2. Load existing NINO hashes for this tenant (one DB query, not N)
+    const existingClients = await this.clientRepo
+      .createQueryBuilder('c')
+      .select('c.nino_hash', 'ninoHash')
+      .where('c.tenant_id = :tenantId', { tenantId })
+      .getRawMany<{ ninoHash: string }>();
+    const existingHashes = new Set(existingClients.map((c) => c.ninoHash));
+
+    // 3. Validate all rows — reject the entire import if any errors exist
+    const errors = validateRows(rows, existingHashes, piiHash);
+    if (errors.length > 0) {
+      throw new UnprocessableEntityException({ message: { valid: false, errors } });
+    }
+
+    // 4. Create all clients in a single transaction (no HMRC calls — invitations sent separately)
+    let created = 0;
+
+    await this.dataSource.transaction(async (manager) => {
+      for (const row of rows) {
+        const ninoClean = row.nino!.replace(/\s/g, '').toUpperCase();
+        const client = manager.create(Client, {
+          tenantId,
+          name: row.name!.trim(),
+          nino: ninoClean,
+          ninoHash: piiHash(ninoClean),
+          postcode: row.postcode!.trim().toUpperCase(),
+          email: row.email!.trim(),
+          phone: row.phone?.trim() || undefined,
+          agentType: row.agent_type?.trim().toLowerCase() === 'supporting' ? 'supporting' : 'main',
+          invitationStatus: 'pending',
+        });
+        await manager.save(Client, client);
+        created++;
+      }
+    });
+
+    return {
+      valid: true,
+      created,
+      invitationsSent: 0,
+      warnings: [],
+    };
   }
 }

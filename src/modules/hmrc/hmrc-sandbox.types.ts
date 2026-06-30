@@ -42,6 +42,9 @@ export interface HmrcSandboxIndividualUser extends Omit<HmrcSandboxIndividualRaw
 
 export interface SandboxTestUsersResult {
   agent: HmrcSandboxAgentUser;
+  /** First individual — shown in the UI for the single-client HMRC flow. */
   individual: HmrcSandboxIndividualUser;
+  /** All 5 individuals — used for the bulk import test CSV download. */
+  individuals: HmrcSandboxIndividualUser[];
   nextSteps: string[];
 }
