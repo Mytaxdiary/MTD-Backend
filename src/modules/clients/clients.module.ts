@@ -8,12 +8,15 @@ import { ClientsController } from './clients.controller';
 import { HmrcModule } from '../hmrc/hmrc.module';
 import { MailModule } from '../mail/mail.module';
 import { Tenant } from '../tenants/entities/tenant.entity';
+import { NotificationPreferences } from '../tenants/entities/notification-preferences.entity';
+import { AppNotificationsModule } from '../app-notifications/app-notifications.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Client, Tenant]),
+    TypeOrmModule.forFeature([Client, Tenant, NotificationPreferences]),
     HmrcModule,
     MailModule,
+    AppNotificationsModule,
     MulterModule.register({ storage: memoryStorage() }),
   ],
   controllers: [ClientsController],

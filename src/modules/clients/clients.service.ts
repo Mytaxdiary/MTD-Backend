@@ -49,6 +49,8 @@ import { defaultPaymentsDateRange } from './dto/get-payments-and-allocations-que
 import { accountsErrorToUserMessage } from './hmrc-accounts-errors.util';
 import { normalizeTaxYear } from './tax-year.util';
 import { piiHash } from '../../common/utils/pii-hash.util';
+import { AppNotificationsService } from '../app-notifications/app-notifications.service';
+import { NotificationPreferences } from '../tenants/entities/notification-preferences.entity';
 
 /** HMRC POST /relationships result. */
 type HmrcRelationshipResult = 'active' | 'inactive';
@@ -82,10 +84,13 @@ export class ClientsService {
     private readonly clientRepo: Repository<Client>,
     @InjectRepository(Tenant)
     private readonly tenantRepo: Repository<Tenant>,
+    @InjectRepository(NotificationPreferences)
+    private readonly notifPrefsRepo: Repository<NotificationPreferences>,
     private readonly configService: ConfigService,
     private readonly hmrcService: HmrcService,
     private readonly hmrcApiClient: HmrcApiClient,
     private readonly mailService: MailService,
+    private readonly appNotificationsService: AppNotificationsService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -794,11 +799,58 @@ export class ClientsService {
       return;
     }
 
+    const previousStatus = client.invitationStatus;
     client.invitationStatus = hmrcStatus;
     await this.clientRepo.save(client);
 
     if (hmrcStatus === 'accepted' || hmrcStatus === 'partial-auth') {
       await this.syncRelationshipFromHmrc(client, arn, accessToken, fraudContext);
+
+      // Fire notifications only on the first transition to accepted.
+      if (previousStatus !== 'accepted' && previousStatus !== 'partial-auth') {
+        await this.fireInvitationAcceptedNotifications(client).catch((err) => {
+          this.logger.error(`Failed to send invite-accepted notification for ${client.id}`, err);
+        });
+      }
+    }
+  }
+
+  /**
+   * Creates an in-app notification and sends an email to the agent
+   * when a client accepts the HMRC invitation.
+   */
+  private async fireInvitationAcceptedNotifications(client: Client): Promise<void> {
+    const tenantId = client.tenantId;
+    const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
+    if (!tenant) return;
+
+    const prefs = await this.notifPrefsRepo.findOne({ where: { tenantId } });
+    const inviteAccepted = prefs?.inviteAccepted ?? true;
+
+    const clientName = client.name ?? 'Your client';
+    const frontendUrl =
+      this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+    const clientUrl = `${frontendUrl}/clients/detail?id=${client.id}`;
+
+    // Always create an in-app notification.
+    await this.appNotificationsService.create({
+      tenantId,
+      type: 'invite_accepted',
+      title: 'Invitation accepted',
+      body: `${clientName} has accepted the HMRC authorisation invitation. You can now manage their MTD submissions.`,
+      clientId: client.id,
+    });
+
+    // Send email only when the preference is enabled and the tenant has a contact email.
+    if (inviteAccepted && tenant.contactEmail) {
+      const agentName = tenant.contactName ?? tenant.contactEmail;
+      await this.mailService.sendInvitationAcceptedEmail({
+        to: tenant.contactEmail,
+        agentName,
+        firmName: tenant.firmName,
+        clientName,
+        clientUrl,
+      });
     }
   }
 

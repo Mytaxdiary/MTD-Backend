@@ -10,6 +10,11 @@ import {
   clientInvitationPlainText,
   type ClientInvitationEmailData,
 } from './templates/client-invitation.template';
+import {
+  invitationAcceptedTemplate,
+  invitationAcceptedPlainText,
+  type InvitationAcceptedEmailData,
+} from './templates/invitation-accepted.template';
 
 @Injectable()
 export class MailService {
@@ -79,6 +84,15 @@ ${body
   .join('\n')}
 </div>`;
     await this.send(to, subject, html, body);
+  }
+
+  async sendInvitationAcceptedEmail(data: InvitationAcceptedEmailData): Promise<void> {
+    await this.send(
+      data.to,
+      `${data.clientName} has accepted the HMRC invitation`,
+      invitationAcceptedTemplate(data),
+      invitationAcceptedPlainText(data),
+    );
   }
 
   async sendClientInvitationEmail(data: ClientInvitationEmailData): Promise<void> {
