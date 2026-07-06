@@ -13,7 +13,10 @@ function setPortalCookie(res: Response, token: string, cookieName: string): void
   res.cookie(cookieName, token, {
     httpOnly: true,
     secure: IS_PROD,
-    sameSite: 'lax',
+    // 'none' in production so the cookie is sent on cross-site requests
+    // (needed when frontend and API are on different cloud subdomains, e.g. onrender.com).
+    // 'none' requires Secure=true, which is set above for production.
+    sameSite: IS_PROD ? 'none' : 'lax',
     maxAge: COOKIE_MAX_AGE * 1000,
     path: '/',
   });
