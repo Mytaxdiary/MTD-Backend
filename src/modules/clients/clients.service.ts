@@ -9,7 +9,9 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, In, IsNull, Not, QueryFailedError, Repository } from 'typeorm';
+import type { FindOptionsWhere } from 'typeorm';
+import type { ListClientsQueryDto } from './dto/list-clients-query.dto';
 import { parseCsvBuffer, validateRows } from './bulk-import.util';
 import type { BulkImportSuccess } from './dto/bulk-import-client.dto';
 import { Client } from './entities/client.entity';
@@ -50,6 +52,7 @@ import { accountsErrorToUserMessage } from './hmrc-accounts-errors.util';
 import { normalizeTaxYear } from './tax-year.util';
 import { piiHash } from '../../common/utils/pii-hash.util';
 import { AppNotificationsService } from '../app-notifications/app-notifications.service';
+import { PortalService } from '../client-portal/portal.service';
 import { NotificationPreferences } from '../tenants/entities/notification-preferences.entity';
 
 /** HMRC POST /relationships result. */
@@ -91,6 +94,7 @@ export class ClientsService {
     private readonly hmrcApiClient: HmrcApiClient,
     private readonly mailService: MailService,
     private readonly appNotificationsService: AppNotificationsService,
+    private readonly portalService: PortalService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -161,6 +165,11 @@ export class ClientsService {
       throw err;
     }
 
+    // Create portal account + send invite email (fire-and-forget — never blocks client creation)
+    void this.portalService.createAndInvite(tenantId, client.id, dto.email, dto.name).catch((err) =>
+      this.logger.warn(`Portal invite failed for client ${client.id}: ${String(err)}`),
+    );
+
     return this.sendHmrcInvitationForClient({
       client,
       arn: connection.arn,
@@ -228,18 +237,67 @@ export class ClientsService {
 
   async findAll(
     tenantId: string,
+    query: ListClientsQueryDto = {},
     fraudContext?: HmrcFraudRequestContext | null,
-  ): Promise<Client[]> {
-    const clients = await this.clientRepo.find({
-      where: { tenantId },
-      order: { createdAt: 'DESC' },
-    });
-    await this.syncInvitationStatusesFromHmrc(tenantId, clients, fraudContext);
-    await this.syncRelationshipsFromHmrc(tenantId, clients, fraudContext);
-    return this.clientRepo.find({
-      where: { tenantId },
-      order: { createdAt: 'DESC' },
-    });
+  ): Promise<{ clients: Client[]; total: number; page: number; limit: number; totalPages: number }> {
+    const page  = Math.max(1, Number(query.page)  || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const status = query.status ?? 'all';
+    const search = (query.search ?? '').trim().toLowerCase();
+
+    // Build DB WHERE — status filter applied at query level
+    const base: FindOptionsWhere<Client> = { tenantId };
+    let where: FindOptionsWhere<Client> | FindOptionsWhere<Client>[];
+    switch (status) {
+      case 'pending':
+        where = { ...base, invitationStatus: 'pending' };
+        break;
+      case 'filed':
+        where = { ...base, authorisedAt: Not(IsNull()) };
+        break;
+      case 'invite-accepted':
+        where = { ...base, invitationStatus: 'accepted' };
+        break;
+      case 'partial-auth':
+        where = { ...base, invitationStatus: 'partial-auth' };
+        break;
+      case 'rejected':
+        where = { ...base, invitationStatus: 'rejected' };
+        break;
+      case 'expired':
+        where = { ...base, invitationStatus: In(['expired', 'cancelled', 'deauthorised']) };
+        break;
+      default:
+        where = base;
+    }
+
+    // Fetch all status-filtered rows (HMRC sync then re-fetch)
+    let all = await this.clientRepo.find({ where, order: { createdAt: 'DESC' } });
+    await this.syncInvitationStatusesFromHmrc(tenantId, all, fraudContext);
+    await this.syncRelationshipsFromHmrc(tenantId, all, fraudContext);
+    all = await this.clientRepo.find({ where, order: { createdAt: 'DESC' } });
+
+    // Search in-memory (names are encrypted — cannot use DB LIKE)
+    if (search) {
+      all = all.filter(
+        (c) =>
+          c.name.toLowerCase().includes(search) ||
+          c.nino.toLowerCase().includes(search),
+      );
+    }
+
+    const total      = all.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const safePage   = Math.min(page, totalPages);
+    const offset     = (safePage - 1) * limit;
+
+    return {
+      clients: all.slice(offset, offset + limit),
+      total,
+      page: safePage,
+      limit,
+      totalPages,
+    };
   }
 
   /** Clients with an HMRC invitation awaiting acceptance (sandbox / live pending). */

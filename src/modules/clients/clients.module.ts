@@ -10,6 +10,7 @@ import { MailModule } from '../mail/mail.module';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { NotificationPreferences } from '../tenants/entities/notification-preferences.entity';
 import { AppNotificationsModule } from '../app-notifications/app-notifications.module';
+import { ClientPortalModule } from '../client-portal/client-portal.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { AppNotificationsModule } from '../app-notifications/app-notifications.m
     HmrcModule,
     MailModule,
     AppNotificationsModule,
+    ClientPortalModule,
     MulterModule.register({ storage: memoryStorage() }),
   ],
   controllers: [ClientsController],

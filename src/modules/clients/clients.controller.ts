@@ -7,10 +7,13 @@ import {
   Query,
   UseGuards,
   Request,
+  Res,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
 } from '@nestjs/common';
+import type { Response as ExpressResponse } from 'express';
+import * as fs from 'fs';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request as ExpressRequest } from 'express';
@@ -18,6 +21,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { ResendInvitationDto } from './dto/resend-invitation.dto';
+import { ListClientsQueryDto } from './dto/list-clients-query.dto';
+import { SendPortalMessageDto } from '../client-portal/dto/send-portal-message.dto';
+import { PortalService } from '../client-portal/portal.service';
 import { GetItsaStatusQueryDto } from './dto/get-itsa-status-query.dto';
 import { GetIncomeExpenditureObligationsQueryDto } from './dto/get-income-expenditure-obligations-query.dto';
 import { GetCrystallisationObligationsQueryDto } from './dto/get-crystallisation-obligations-query.dto';
@@ -38,7 +44,10 @@ interface RequestUser {
 @UseGuards(JwtAuthGuard)
 @Controller('clients')
 export class ClientsController {
-  constructor(private readonly clientsService: ClientsService) {}
+  constructor(
+    private readonly clientsService: ClientsService,
+    private readonly portalService: PortalService,
+  ) {}
 
   private fraudContext(req: ExpressRequest) {
     const u = req.user as RequestUser;
@@ -53,12 +62,12 @@ export class ClientsController {
     return this.clientsService.create(tenantId, email, dto, this.fraudContext(req));
   }
 
-  /** List all clients for this firm */
+  /** List clients for this firm — paginated, server-side status filter */
   @Get()
-  @ApiOperation({ summary: 'List all clients for this firm' })
-  async findAll(@Request() req: ExpressRequest) {
+  @ApiOperation({ summary: 'List clients (paginated, filtered)' })
+  async findAll(@Request() req: ExpressRequest, @Query() query: ListClientsQueryDto) {
     const { tenantId } = req.user as RequestUser;
-    return this.clientsService.findAll(tenantId, this.fraudContext(req));
+    return this.clientsService.findAll(tenantId, query, this.fraudContext(req));
   }
 
   /** Pending HMRC invitations (sent, awaiting client accept) */
@@ -214,6 +223,62 @@ export class ClientsController {
   async checkRelationshipStatus(@Request() req: ExpressRequest, @Param('id') id: string) {
     const { tenantId } = req.user as RequestUser;
     return this.clientsService.checkRelationshipStatus(tenantId, id, this.fraudContext(req));
+  }
+
+  /** Send a message to the client's portal */
+  @Post(':id/portal-message')
+  @ApiOperation({ summary: 'Send a message to the client portal' })
+  async sendPortalMessage(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Body() dto: SendPortalMessageDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.portalService.sendMessage(tenantId, id, dto);
+  }
+
+  /** Resend portal setup invite email */
+  @Post(':id/portal-invite')
+  @ApiOperation({ summary: 'Resend client portal setup invite' })
+  async resendPortalInvite(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const { tenantId } = req.user as RequestUser;
+    const client = await this.clientsService.findOne(tenantId, id);
+    await this.portalService.createAndInvite(tenantId, id, client.email, client.name);
+    return { message: 'Portal invite resent' };
+  }
+
+  /** Generate a short-lived preview token for the agent to view the client portal */
+  @Post(':id/portal-preview-token')
+  @ApiOperation({ summary: 'Generate agent preview token for client portal' })
+  async generatePortalPreviewToken(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const { tenantId } = req.user as RequestUser;
+    const token = await this.portalService.generatePreviewToken(tenantId, id);
+    return { previewToken: token };
+  }
+
+  /** Agent — list files uploaded by a client via the portal */
+  @Get(':id/portal-files')
+  @ApiOperation({ summary: 'List files the client uploaded to their portal' })
+  async getPortalFiles(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const { tenantId } = req.user as RequestUser;
+    return this.portalService.getFilesForAgent(tenantId, id);
+  }
+
+  /** Agent — download a file uploaded by a client */
+  @Get(':id/portal-files/:fileId/download')
+  @ApiOperation({ summary: 'Download a file the client uploaded to their portal' })
+  async downloadPortalFile(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('fileId') fileId: string,
+    @Res() res: ExpressResponse,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    const record = await this.portalService.getFileRecordForAgent(tenantId, id, fileId);
+    if (!fs.existsSync(record.storagePath)) {
+      return res.status(404).json({ message: 'File not found on disk' });
+    }
+    res.download(record.storagePath, record.originalName);
   }
 
   /** Sandbox only — simulate client accepting invitation (Postman step 9) */

@@ -15,6 +15,21 @@ import {
   invitationAcceptedPlainText,
   type InvitationAcceptedEmailData,
 } from './templates/invitation-accepted.template';
+import {
+  portalInviteTemplate,
+  portalInvitePlainText,
+  type PortalInviteEmailData,
+} from './templates/portal-invite.template';
+import {
+  portalMessageTemplate,
+  portalMessagePlainText,
+  type PortalMessageEmailData,
+} from './templates/portal-message.template';
+import {
+  portalFileUploadedTemplate,
+  portalFileUploadedPlainText,
+  type PortalFileUploadedEmailData,
+} from './templates/portal-file-uploaded.template';
 
 @Injectable()
 export class MailService {
@@ -101,6 +116,33 @@ ${body
       `${data.firmName} — Making Tax Digital setup`,
       clientInvitationTemplate(data),
       clientInvitationPlainText(data),
+    );
+  }
+
+  async sendPortalInvite(to: string, data: PortalInviteEmailData): Promise<void> {
+    await this.send(
+      to,
+      `${data.firmName} — set up your client portal`,
+      portalInviteTemplate(data),
+      portalInvitePlainText(data),
+    );
+  }
+
+  async sendPortalMessage(to: string, data: PortalMessageEmailData): Promise<void> {
+    await this.send(
+      to,
+      `[${data.firmName}] ${data.subject}`,
+      portalMessageTemplate(data),
+      portalMessagePlainText(data),
+    );
+  }
+
+  async sendPortalFileUploaded(to: string, data: PortalFileUploadedEmailData): Promise<void> {
+    await this.send(
+      to,
+      `New file from ${data.clientName}: ${data.fileName}`,
+      portalFileUploadedTemplate(data),
+      portalFileUploadedPlainText(data),
     );
   }
 

@@ -21,6 +21,7 @@ import { ChaseLogsModule } from './modules/chase-logs/chase-logs.module';
 import { ChaseModule } from './modules/chase/chase.module';
 import { AppNotificationsModule } from './modules/app-notifications/app-notifications.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { ClientPortalModule } from './modules/client-portal/client-portal.module';
 import hmrcConfig from './config/hmrc.config';
 
 @Module({
@@ -75,6 +76,7 @@ import hmrcConfig from './config/hmrc.config';
     ChaseModule,
     AppNotificationsModule,
     DashboardModule,
+    ClientPortalModule,
   ],
   controllers: [AppController],
   providers: [
