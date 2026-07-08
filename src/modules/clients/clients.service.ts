@@ -347,6 +347,7 @@ export class ClientsService {
         method: 'PUT',
         accessToken,
         fraudContext,
+        headers: { Accept: 'application/vnd.hmrc.1.0+json' },
       });
       if (!res.ok) {
         const text = await res.text();
@@ -830,6 +831,7 @@ export class ClientsService {
     const res = await this.hmrcApiClient.fetch(url, {
       accessToken,
       fraudContext,
+      headers: { Accept: 'application/vnd.hmrc.1.0+json' },
     });
 
     const text = await res.text();
@@ -1009,7 +1011,10 @@ export class ClientsService {
       method: 'POST',
       accessToken,
       fraudContext,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/vnd.hmrc.1.0+json',
+      },
       body: JSON.stringify({
         service: ['MTD-IT'],
         clientIdType: 'ni',
@@ -1128,7 +1133,10 @@ export class ClientsService {
       method: 'POST',
       accessToken,
       fraudContext,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/vnd.hmrc.1.0+json',
+      },
       body: JSON.stringify({
         service: ['MTD-IT'],
         clientType: 'personal',
