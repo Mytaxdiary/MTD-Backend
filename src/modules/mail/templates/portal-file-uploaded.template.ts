@@ -1,3 +1,4 @@
+import { EMAIL_LEGAL_FOOTER_DIV } from './email-footer';
 export interface PortalFileUploadedEmailData {
   agentEmail: string;
   clientName: string;
@@ -34,7 +35,8 @@ export function portalFileUploadedTemplate(d: PortalFileUploadedEmailData): stri
     </div>
     <a href="${d.clientDetailUrl}" class="btn">View client & download file</a>
   </div>
-  <div class="footer">${d.firmName} · NewEffect MTD ITSA</div>
+  <div class="footer">${d.firmName} · My Tax Diary</div>
+  ${EMAIL_LEGAL_FOOTER_DIV}
 </div>
 </body></html>`;
 }

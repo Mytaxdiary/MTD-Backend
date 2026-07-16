@@ -1,3 +1,4 @@
+import { EMAIL_LEGAL_FOOTER_DIV } from './email-footer';
 export interface PortalInviteEmailData {
   clientName: string;
   firmName: string;
@@ -32,7 +33,8 @@ export function portalInviteTemplate(d: PortalInviteEmailData): string {
     <a href="${d.setupUrl}" class="btn">Set up my portal</a>
     <div class="note">This link expires in ${d.expiryDays} days. If you did not expect this email, please contact ${d.firmName} directly.</div>
   </div>
-  <div class="footer">Sent on behalf of ${d.firmName} via NewEffect MTD ITSA</div>
+  <div class="footer">Sent on behalf of ${d.firmName} via My Tax Diary</div>
+  ${EMAIL_LEGAL_FOOTER_DIV}
 </div>
 </body></html>`;
 }

@@ -49,6 +49,9 @@ import { defaultAccountsDateRange } from './dto/get-balance-and-transactions-que
 import type { GetPaymentsAndAllocationsQueryDto } from './dto/get-payments-and-allocations-query.dto';
 import { defaultPaymentsDateRange } from './dto/get-payments-and-allocations-query.dto';
 import { accountsErrorToUserMessage } from './hmrc-accounts-errors.util';
+import type { BissResponse, IncomeSummaryResponse } from './hmrc-biss.types';
+import { ClientNote } from './entities/client-note.entity';
+import { currentUkTaxYear } from './dto/get-income-summary-query.dto';
 import { normalizeTaxYear } from './tax-year.util';
 import { piiHash } from '../../common/utils/pii-hash.util';
 import { AppNotificationsService } from '../app-notifications/app-notifications.service';
@@ -89,6 +92,8 @@ export class ClientsService {
     private readonly tenantRepo: Repository<Tenant>,
     @InjectRepository(NotificationPreferences)
     private readonly notifPrefsRepo: Repository<NotificationPreferences>,
+    @InjectRepository(ClientNote)
+    private readonly clientNoteRepo: Repository<ClientNote>,
     private readonly configService: ConfigService,
     private readonly hmrcService: HmrcService,
     private readonly hmrcApiClient: HmrcApiClient,
@@ -1240,5 +1245,182 @@ export class ClientsService {
       invitationsSent: 0,
       warnings: [],
     };
+  }
+
+  /**
+   * Aggregate Business Income Source Summary (BISS v3.0) across all businesses.
+   *
+   * 1. Lists all business income sources (Business Details v2.0 — already cached in BusinessesCard).
+   * 2. Calls BISS for each business in parallel (one call per income source).
+   * 3. Aggregates totalIncome, totalExpenses, netProfit, netLoss and returns per-business breakdown.
+   *
+   * Endpoint per business:
+   *   GET /income-tax/income-sources/business-source-summary/{nino}/{taxYear}/{incomeSourceId}/{typeOfBusiness}
+   */
+  async getIncomeSummary(
+    tenantId: string,
+    clientId: string,
+    taxYear?: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<IncomeSummaryResponse> {
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+
+    const resolvedTaxYear = taxYear ?? currentUkTaxYear();
+
+    // 1. Fetch business list
+    const businessListUrl =
+      `${this.hmrcBaseUrl}/individuals/business/details/` +
+      `${encodeURIComponent(client.nino)}/list`;
+
+    const listRes = await this.fetchHmrcBusinessJson<{ listOfBusinesses?: Array<{ businessId: string; typeOfBusiness: string; tradingName?: string }> }>(
+      businessListUrl,
+      accessToken,
+      fraudContext,
+      businessErrorToUserMessage,
+    );
+
+    const businesses = listRes.listOfBusinesses ?? [];
+
+    // 2. Fetch BISS for each business in parallel; silently skip any that return 404/no-data
+    const bissResults = await Promise.allSettled(
+      businesses.map(async (biz) => {
+        const typeOfBusiness = this.toBissTypeOfBusiness(biz.typeOfBusiness);
+        if (!typeOfBusiness) return null; // skip unsupported types
+
+        const url =
+          `${this.hmrcBaseUrl}/income-tax/income-sources/business-source-summary/` +
+          `${encodeURIComponent(client.nino)}/${encodeURIComponent(resolvedTaxYear)}/` +
+          `${encodeURIComponent(biz.businessId)}/${encodeURIComponent(typeOfBusiness)}`;
+
+        let res: Response;
+        try {
+          res = await this.hmrcApiClient.fetch(url, {
+            accessToken,
+            fraudContext,
+            headers: { Accept: 'application/vnd.hmrc.3.0+json' },
+          });
+        } catch (err) {
+          this.logger.warn(`BISS network error for business ${biz.businessId}`, err);
+          return null;
+        }
+
+        if (res.status === 404) return null; // no submissions yet — treat as zero
+        const text = await res.text();
+        if (!res.ok) {
+          this.logger.warn(`BISS ${res.status} for business ${biz.businessId}: ${text}`);
+          return null;
+        }
+
+        try {
+          const data = text ? (JSON.parse(text) as BissResponse) : null;
+          return { biz, data };
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    // 3. Aggregate
+    let totalIncome = 0;
+    let totalExpenses = 0;
+    let netProfit = 0;
+    let netLoss = 0;
+    const businessBreakdown: IncomeSummaryResponse['businesses'] = [];
+
+    for (const result of bissResults) {
+      if (result.status !== 'fulfilled' || !result.value) continue;
+      const { biz, data } = result.value;
+      if (!data) continue;
+
+      const bizIncome = data.total?.income?.totalIncome ?? 0;
+      const bizExpenses = data.total?.expenses?.totalExpenses ?? 0;
+      const bizProfit = data.profit?.net ?? 0;
+      const bizLoss = data.loss?.net ?? 0;
+
+      totalIncome += bizIncome;
+      totalExpenses += bizExpenses;
+      netProfit += bizProfit;
+      netLoss += bizLoss;
+
+      businessBreakdown.push({
+        businessId: biz.businessId,
+        typeOfBusiness: biz.typeOfBusiness,
+        tradingName: biz.tradingName,
+        totalIncome: bizIncome,
+        totalExpenses: bizExpenses,
+        netProfit: bizProfit,
+        netLoss: bizLoss,
+      });
+    }
+
+    return {
+      taxYear: resolvedTaxYear,
+      totalIncome,
+      totalExpenses,
+      netProfit,
+      netLoss,
+      businesses: businessBreakdown,
+    };
+  }
+
+  /** Maps HMRC business typeOfBusiness to the BISS API path segment. */
+  private toBissTypeOfBusiness(type: string): string | null {
+    const map: Record<string, string> = {
+      'self-employment': 'self-employment',
+      'uk-property': 'uk-property-non-fhl',
+      'uk-property-non-fhl': 'uk-property-non-fhl',
+      'uk-property-fhl': 'uk-property-fhl',
+      'foreign-property': 'foreign-property',
+      'foreign-property-fhl': 'foreign-property-fhl',
+    };
+    return map[type] ?? null;
+  }
+
+  // ── Client Notes ────────────────────────────────────────────────────────────
+
+  async getNotes(tenantId: string, clientId: string): Promise<ClientNote[]> {
+    await this.assertClientBelongsToTenant(tenantId, clientId);
+    return this.clientNoteRepo.find({
+      where: { tenantId, clientId },
+      order: { isPinned: 'DESC', createdAt: 'DESC' },
+    });
+  }
+
+  async createNote(
+    tenantId: string,
+    clientId: string,
+    text: string,
+    authorName: string,
+  ): Promise<ClientNote> {
+    await this.assertClientBelongsToTenant(tenantId, clientId);
+    const note = this.clientNoteRepo.create({ tenantId, clientId, text, authorName, isPinned: false });
+    return this.clientNoteRepo.save(note);
+  }
+
+  async updateNote(
+    tenantId: string,
+    clientId: string,
+    noteId: string,
+    patch: { text?: string; isPinned?: boolean },
+  ): Promise<ClientNote> {
+    await this.assertClientBelongsToTenant(tenantId, clientId);
+    const note = await this.clientNoteRepo.findOne({ where: { id: noteId, tenantId, clientId } });
+    if (!note) throw new NotFoundException('Note not found');
+    if (patch.text !== undefined) note.text = patch.text;
+    if (patch.isPinned !== undefined) note.isPinned = patch.isPinned;
+    return this.clientNoteRepo.save(note);
+  }
+
+  async deleteNote(tenantId: string, clientId: string, noteId: string): Promise<void> {
+    await this.assertClientBelongsToTenant(tenantId, clientId);
+    const note = await this.clientNoteRepo.findOne({ where: { id: noteId, tenantId, clientId } });
+    if (!note) throw new NotFoundException('Note not found');
+    await this.clientNoteRepo.softDelete(noteId);
+  }
+
+  private async assertClientBelongsToTenant(tenantId: string, clientId: string): Promise<void> {
+    const exists = await this.clientRepo.existsBy({ id: clientId, tenantId });
+    if (!exists) throw new NotFoundException('Client not found');
   }
 }

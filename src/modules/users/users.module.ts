@@ -4,6 +4,7 @@ import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { Client } from '../clients/entities/client.entity';
+import { ClientNote } from '../clients/entities/client-note.entity';
 import { HmrcConnection } from '../hmrc/entities/hmrc-connection.entity';
 import { ChaseTemplate } from '../chase-templates/entities/chase-template.entity';
 import { ChaseLog } from '../chase-logs/entities/chase-log.entity';
@@ -22,6 +23,7 @@ import { UsersController } from './users.controller';
       Role,
       Tenant,
       Client,
+      ClientNote,
       HmrcConnection,
       ChaseTemplate,
       ChaseLog,

@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -11,6 +13,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  HttpCode,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
 import * as fs from 'fs';
@@ -29,6 +32,7 @@ import { GetIncomeExpenditureObligationsQueryDto } from './dto/get-income-expend
 import { GetCrystallisationObligationsQueryDto } from './dto/get-crystallisation-obligations-query.dto';
 import { GetBalanceAndTransactionsQueryDto } from './dto/get-balance-and-transactions-query.dto';
 import { GetPaymentsAndAllocationsQueryDto } from './dto/get-payments-and-allocations-query.dto';
+import { GetIncomeSummaryQueryDto } from './dto/get-income-summary-query.dto';
 import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
 
 interface RequestUser {
@@ -217,6 +221,26 @@ export class ClientsController {
     );
   }
 
+  /**
+   * Aggregate Business Income Source Summary (BISS v3.0) for all businesses.
+   * Returns YTD totalIncome, totalExpenses, netProfit, netLoss.
+   */
+  @Get(':id/income-summary')
+  @ApiOperation({ summary: 'Retrieve aggregated YTD income summary (BISS v3.0) for a client' })
+  async getIncomeSummary(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Query() query: GetIncomeSummaryQueryDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getIncomeSummary(
+      tenantId,
+      id,
+      query.taxYear,
+      this.fraudContext(req),
+    );
+  }
+
   /** Verify agent–client relationship with HMRC (POST /agents/{arn}/relationships) */
   @Get(':id/relationship-status')
   @ApiOperation({ summary: 'Verify HMRC agent–client relationship is active' })
@@ -279,6 +303,51 @@ export class ClientsController {
       return res.status(404).json({ message: 'File not found on disk' });
     }
     res.download(record.storagePath, record.originalName);
+  }
+
+  // ── Client Notes ─────────────────────────────────────────────────────────────
+
+  @Get(':id/notes')
+  @ApiOperation({ summary: 'List notes for a client' })
+  async getNotes(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getNotes(tenantId, id);
+  }
+
+  @Post(':id/notes')
+  @ApiOperation({ summary: 'Create a note for a client' })
+  async createNote(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Body() body: { text: string },
+  ) {
+    const { tenantId, email } = req.user as RequestUser;
+    const authorName = (req.user as RequestUser & { name?: string }).name ?? email;
+    return this.clientsService.createNote(tenantId, id, body.text, authorName);
+  }
+
+  @Patch(':id/notes/:noteId')
+  @ApiOperation({ summary: 'Update a client note (text or isPinned)' })
+  async updateNote(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('noteId') noteId: string,
+    @Body() body: { text?: string; isPinned?: boolean },
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.updateNote(tenantId, id, noteId, body);
+  }
+
+  @Delete(':id/notes/:noteId')
+  @HttpCode(204)
+  @ApiOperation({ summary: 'Delete a client note' })
+  async deleteNote(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('noteId') noteId: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    await this.clientsService.deleteNote(tenantId, id, noteId);
   }
 
   /** Sandbox only — simulate client accepting invitation (Postman step 9) */

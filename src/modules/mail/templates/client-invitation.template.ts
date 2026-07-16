@@ -1,3 +1,4 @@
+import { EMAIL_LEGAL_FOOTER } from './email-footer';
 const BASE_STYLE = `margin:0;padding:0;background:#f6f8fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif`;
 const WRAPPER = `width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px"`;
 const CARD = `width="100%" style="max-width:520px;background:#fff;border-radius:10px;border:1px solid #e5e7eb;padding:40px 36px"`;
@@ -46,6 +47,7 @@ export function clientInvitationTemplate(data: ClientInvitationEmailData): strin
       </table>
     </td></tr>
   </table>
+  ${EMAIL_LEGAL_FOOTER}
 </body>
 </html>`;
 }

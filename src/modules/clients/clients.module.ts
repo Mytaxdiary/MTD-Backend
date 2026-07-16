@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { MulterModule } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Client } from './entities/client.entity';
+import { ClientNote } from './entities/client-note.entity';
 import { ClientsService } from './clients.service';
 import { ClientsController } from './clients.controller';
 import { HmrcModule } from '../hmrc/hmrc.module';
@@ -14,7 +15,7 @@ import { ClientPortalModule } from '../client-portal/client-portal.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Client, Tenant, NotificationPreferences]),
+    TypeOrmModule.forFeature([Client, ClientNote, Tenant, NotificationPreferences]),
     HmrcModule,
     MailModule,
     AppNotificationsModule,

@@ -1,3 +1,4 @@
+import { EMAIL_LEGAL_FOOTER_DIV } from './email-footer';
 export interface PortalMessageEmailData {
   clientName: string;
   firmName: string;
@@ -28,7 +29,8 @@ export function portalMessageTemplate(d: PortalMessageEmailData): string {
     <div class="msg-box"><strong>${d.subject}</strong><br><br>${bodyHtml}</div>
     <a href="${d.portalUrl}" class="btn">View in portal</a>
   </div>
-  <div class="footer">Sent on behalf of ${d.firmName} via NewEffect MTD ITSA</div>
+  <div class="footer">Sent on behalf of ${d.firmName} via My Tax Diary</div>
+  ${EMAIL_LEGAL_FOOTER_DIV}
 </div>
 </body></html>`;
 }

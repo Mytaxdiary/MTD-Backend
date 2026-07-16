@@ -15,6 +15,7 @@ import { NotificationPreferences } from '../tenants/entities/notification-prefer
 import { ClientUser } from '../client-portal/entities/client-user.entity';
 import { PortalMessage } from '../client-portal/entities/portal-message.entity';
 import { PortalFile } from '../client-portal/entities/portal-file.entity';
+import { ClientNote } from '../clients/entities/client-note.entity';
 
 const AGENT_ROLE = 'Agent';
 const PORTAL_FILES_BASE = path.join(process.cwd(), 'uploads', 'portal-files');
@@ -48,6 +49,8 @@ export class UsersService {
     private readonly portalMessageRepo: Repository<PortalMessage>,
     @InjectRepository(PortalFile)
     private readonly portalFileRepo: Repository<PortalFile>,
+    @InjectRepository(ClientNote)
+    private readonly clientNoteRepo: Repository<ClientNote>,
   ) {}
 
   async findByEmail(email: string): Promise<User | null> {
@@ -136,8 +139,9 @@ export class UsersService {
         await manager.delete(PortalMessage, { clientId: In(clientIds) });
         await manager.delete(ClientUser, { clientId: In(clientIds) });
 
-        // Chase logs are keyed by clientId (no FK cascade in DB)
+        // Chase logs and notes are keyed by clientId (no FK cascade in DB)
         await manager.delete(ChaseLog, { clientId: In(clientIds) });
+        await manager.delete(ClientNote, { clientId: In(clientIds) });
 
         // Delete clients
         await manager.delete(Client, { tenantId });
