@@ -30,6 +30,16 @@ import {
   portalFileUploadedPlainText,
   type PortalFileUploadedEmailData,
 } from './templates/portal-file-uploaded.template';
+import {
+  deletionRequestTemplate,
+  deletionRequestPlainText,
+  type DeletionRequestEmailData,
+} from './templates/deletion-request.template';
+import {
+  deletionCancelledTemplate,
+  deletionCancelledPlainText,
+  type DeletionCancelledEmailData,
+} from './templates/deletion-cancelled.template';
 
 @Injectable()
 export class MailService {
@@ -143,6 +153,24 @@ ${body
       `New file from ${data.clientName}: ${data.fileName}`,
       portalFileUploadedTemplate(data),
       portalFileUploadedPlainText(data),
+    );
+  }
+
+  async sendDeletionRequestEmail(data: DeletionRequestEmailData): Promise<void> {
+    await this.send(
+      data.to,
+      'Your My Tax Diary account deletion has been scheduled',
+      deletionRequestTemplate(data),
+      deletionRequestPlainText(data),
+    );
+  }
+
+  async sendDeletionCancelledEmail(data: DeletionCancelledEmailData): Promise<void> {
+    await this.send(
+      data.to,
+      'Your My Tax Diary account deletion has been cancelled',
+      deletionCancelledTemplate(data),
+      deletionCancelledPlainText(data),
     );
   }
 
