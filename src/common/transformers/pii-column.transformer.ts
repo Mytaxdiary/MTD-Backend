@@ -11,8 +11,7 @@ import { encrypt, decrypt, isEncrypted } from '../../modules/hmrc/crypto.util';
  * Falls back to plaintext when HMRC_ENCRYPTION_KEY is not set (dev without .env).
  */
 export function piiTransformer(nullable = false): ValueTransformer {
-  const getKey = (): string | undefined =>
-    process.env.HMRC_ENCRYPTION_KEY;
+  const getKey = (): string | undefined => process.env.HMRC_ENCRYPTION_KEY;
 
   return {
     to(value: string | null | undefined): string | null {

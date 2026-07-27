@@ -8,10 +8,7 @@ import { ChaseLogsService } from './chase-logs.service';
 import { ChaseLogsController } from './chase-logs.controller';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([ChaseLog, Client, Tenant]),
-    MailModule,
-  ],
+  imports: [TypeOrmModule.forFeature([ChaseLog, Client, Tenant]), MailModule],
   controllers: [ChaseLogsController],
   providers: [ChaseLogsService],
   exports: [ChaseLogsService],

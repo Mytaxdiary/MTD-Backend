@@ -45,10 +45,7 @@ export type DashboardSummary = {
   clients: DashboardClientRow[];
 };
 
-function formatChaseText(
-  lastChaseAt: Date | null,
-  lastStatus: string,
-): string {
+function formatChaseText(lastChaseAt: Date | null, lastStatus: string): string {
   if (!lastChaseAt) return 'Not chased';
   const daysAgo = Math.floor((Date.now() - lastChaseAt.getTime()) / 86_400_000);
   if (lastStatus === 'responded') return 'Records received';
@@ -66,7 +63,12 @@ function deriveQDots(
   if (!isAuthorised) {
     return { q1: 'N/A', q2: 'N/A', q3: 'N/A', q4: 'N/A' };
   }
-  const dots: Record<string, string> = { q1: 'pending', q2: 'pending', q3: 'pending', q4: 'pending' };
+  const dots: Record<string, string> = {
+    q1: 'pending',
+    q2: 'pending',
+    q3: 'pending',
+    q4: 'pending',
+  };
   if (daysOverdue > 0) dots[`q${currentQNum}`] = 'overdue';
   return dots as { q1: string; q2: string; q3: string; q4: string };
 }

@@ -41,7 +41,13 @@ export class Client extends BaseEntity {
   email: string;
 
   /** Encrypted at rest. */
-  @Column({ name: 'phone', type: 'varchar', length: 500, nullable: true, transformer: piiTransformer(true) })
+  @Column({
+    name: 'phone',
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    transformer: piiTransformer(true),
+  })
   phone?: string;
 
   @Column({ name: 'agent_type', type: 'varchar', length: 20, default: 'main' })

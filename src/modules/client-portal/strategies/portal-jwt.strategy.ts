@@ -11,7 +11,7 @@ export const PORTAL_JWT_STRATEGY = 'portal-jwt';
 export const PORTAL_COOKIE = 'mtd_cp_at';
 
 export interface PortalJwtPayload {
-  sub: string;        // clientUserId, or 'preview' for agent preview sessions
+  sub: string; // clientUserId, or 'preview' for agent preview sessions
   clientId: string;
   tenantId: string;
   role: 'client';

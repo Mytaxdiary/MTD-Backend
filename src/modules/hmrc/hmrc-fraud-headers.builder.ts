@@ -44,10 +44,7 @@ function resolvePublicClientIp(ctx: HmrcFraudRequestContext): string | undefined
   return undefined;
 }
 
-function resolveClientPort(
-  ctx: HmrcFraudRequestContext,
-  devFallback?: string,
-): string | undefined {
+function resolveClientPort(ctx: HmrcFraudRequestContext, devFallback?: string): string | undefined {
   const port = ctx.clientPublicPort ?? ctx.client?.publicPort;
   if (port && isValidPublicPort(port)) return port;
   if (devFallback && isValidPublicPort(devFallback)) return devFallback;
@@ -94,7 +91,8 @@ export class HmrcFraudHeadersBuilder {
       headers['Gov-Client-Device-ID'] = client.deviceId;
       headers['Gov-Client-Timezone'] = client.timezone;
       headers['Gov-Client-Screens'] = formatScreens(client.screens);
-      headers['Gov-Client-Window-Size'] = `width=${client.windowWidth}&height=${client.windowHeight}`;
+      headers['Gov-Client-Window-Size'] =
+        `width=${client.windowWidth}&height=${client.windowHeight}`;
       headers['Gov-Client-User-IDs'] = `my-application=${pct(ctx.userEmail)}`;
 
       const clientIp = resolvePublicClientIp(ctx);
@@ -124,9 +122,7 @@ export class HmrcFraudHeadersBuilder {
     // PASSWORD is not a valid MFA type for this header; omitting is preferable to sending invalid data.
     if (ctx.mfaAuthenticated) {
       const loginTimestamp = pct(
-        ctx.loginAt
-          ? new Date(ctx.loginAt * 1000).toISOString()
-          : new Date().toISOString(),
+        ctx.loginAt ? new Date(ctx.loginAt * 1000).toISOString() : new Date().toISOString(),
       );
       const uniqueRef = ctx.userEmail
         ? pct(`${ctx.userEmail.slice(0, 8)}_${ctx.loginAt ?? Date.now()}`)

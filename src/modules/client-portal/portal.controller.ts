@@ -87,7 +87,21 @@ export class PortalController {
       limits: { fileSize: 10 * 1024 * 1024 },
       fileFilter: (_req, file, cb) => {
         const ext = path.extname(file.originalname).toLowerCase();
-        const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.csv', '.xls', '.xlsx', '.doc', '.docx', '.zip', '.txt'];
+        const allowed = [
+          '.pdf',
+          '.jpg',
+          '.jpeg',
+          '.png',
+          '.gif',
+          '.webp',
+          '.csv',
+          '.xls',
+          '.xlsx',
+          '.doc',
+          '.docx',
+          '.zip',
+          '.txt',
+        ];
         if (!allowed.includes(ext)) {
           return cb(new BadRequestException(`File type ${ext} is not allowed`), false);
         }
@@ -95,10 +109,7 @@ export class PortalController {
       },
     }),
   )
-  async uploadFile(
-    @Request() req: ExpressRequest,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
+  async uploadFile(@Request() req: ExpressRequest, @UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file attached');
     const { clientId, tenantId } = this.user(req);
     return this.portalService.uploadFile(clientId, tenantId, file);

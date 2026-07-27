@@ -37,7 +37,7 @@ export class UsersController {
     summary: '[DEV ONLY] Clear all firm data for a user',
     description:
       'Deletes clients, HMRC connection, chase templates & logs, notifications, and portal data ' +
-      'for the user\'s firm. The user account and tenant row are preserved so the account remains ' +
+      "for the user's firm. The user account and tenant row are preserved so the account remains " +
       'usable. Use this to reset a test account without re-registering. Dev only.',
   })
   @ApiParam({ name: 'id', description: 'User UUID' })

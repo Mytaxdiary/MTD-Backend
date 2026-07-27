@@ -25,9 +25,7 @@ function escapeHtml(text: string): string {
 
 export function clientInvitationTemplate(data: ClientInvitationEmailData): string {
   const { clientName, agentName, firmName, personalMessage } = data;
-  const bodyText =
-    personalMessage?.trim() ||
-    DEFAULT_MESSAGE.replace(/\{name\}/g, clientName);
+  const bodyText = personalMessage?.trim() || DEFAULT_MESSAGE.replace(/\{name\}/g, clientName);
   const bodyHtml = escapeHtml(bodyText).replace(/\n/g, '<br>');
 
   return `<!DOCTYPE html>
@@ -54,7 +52,6 @@ export function clientInvitationTemplate(data: ClientInvitationEmailData): strin
 
 export function clientInvitationPlainText(data: ClientInvitationEmailData): string {
   const bodyText =
-    data.personalMessage?.trim() ||
-    DEFAULT_MESSAGE.replace(/\{name\}/g, data.clientName);
+    data.personalMessage?.trim() || DEFAULT_MESSAGE.replace(/\{name\}/g, data.clientName);
   return `${bodyText}\n\n— ${data.agentName}, ${data.firmName}`;
 }

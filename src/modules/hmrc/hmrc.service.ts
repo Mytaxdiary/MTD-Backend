@@ -159,7 +159,8 @@ export class HmrcService {
     }
 
     const expiresAt = connection.accessTokenExpiresAt?.getTime() ?? 0;
-    const needsRefresh = expiresAt - Date.now() < REFRESH_BUFFER_MS || connection.status !== 'connected';
+    const needsRefresh =
+      expiresAt - Date.now() < REFRESH_BUFFER_MS || connection.status !== 'connected';
 
     if (!needsRefresh) {
       return this.decryptToken(connection.accessToken);
@@ -304,13 +305,8 @@ export class HmrcService {
   // ─── Token request helpers ────────────────────────────────────────────────
 
   /** HMRC nests postcode under individualDetails.address — lift it for the app. */
-  private normalizeSandboxIndividual(
-    raw: HmrcSandboxIndividualRaw,
-  ): HmrcSandboxIndividualUser {
-    const postcode =
-      raw.postcode?.trim() ||
-      raw.individualDetails?.address?.postcode?.trim() ||
-      '';
+  private normalizeSandboxIndividual(raw: HmrcSandboxIndividualRaw): HmrcSandboxIndividualUser {
+    const postcode = raw.postcode?.trim() || raw.individualDetails?.address?.postcode?.trim() || '';
 
     if (!raw.nino?.trim()) {
       throw new BadRequestException('HMRC individual test user response is missing NINO.');
@@ -356,7 +352,9 @@ export class HmrcService {
       });
     } catch (err) {
       this.logger.error(`HMRC create-test-user network error (${path})`, err);
-      throw new InternalServerErrorException('Failed to contact HMRC to create a sandbox test user.');
+      throw new InternalServerErrorException(
+        'Failed to contact HMRC to create a sandbox test user.',
+      );
     }
 
     if (!response.ok) {
@@ -374,9 +372,7 @@ export class HmrcService {
    * Calls HMRC POST /oauth/token. Used for both `authorization_code` (initial exchange)
    * and `refresh_token` grants — same endpoint, different body.
    */
-  private async requestTokens(
-    extraParams: Record<string, string>,
-  ): Promise<HmrcTokenResponse> {
+  private async requestTokens(extraParams: Record<string, string>): Promise<HmrcTokenResponse> {
     const baseUrl = this.configService.get<string>('hmrc.baseUrl');
     const clientId = this.configService.get<string>('hmrc.clientId');
     const clientSecret = this.configService.get<string>('hmrc.clientSecret');
@@ -412,9 +408,7 @@ export class HmrcService {
       if (response.status === 400 || response.status === 401) {
         throw new BadRequestException(`HMRC rejected the token request: ${errorText}`);
       }
-      throw new InternalServerErrorException(
-        `HMRC token endpoint returned ${response.status}.`,
-      );
+      throw new InternalServerErrorException(`HMRC token endpoint returned ${response.status}.`);
     }
 
     return (await response.json()) as HmrcTokenResponse;

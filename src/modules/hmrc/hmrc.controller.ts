@@ -61,10 +61,7 @@ export class HmrcController {
   /** Exchanges the authorization code from HMRC callback and stores tokens. */
   @Post('callback')
   @ApiOperation({ summary: 'Exchange HMRC authorization code for tokens' })
-  async handleCallback(
-    @Request() req: ExpressRequest,
-    @Body() dto: ExchangeCodeDto,
-  ) {
+  async handleCallback(@Request() req: ExpressRequest, @Body() dto: ExchangeCodeDto) {
     const tenantId = this.getTenantId(req);
     const connection = await this.hmrcService.exchangeCode(tenantId, dto.code);
     return {
@@ -78,10 +75,7 @@ export class HmrcController {
   /** Updates the ARN (Agent Reference Number) for this firm's HMRC connection. */
   @Patch('arn')
   @ApiOperation({ summary: 'Save or update the Agent Reference Number for this firm' })
-  async updateArn(
-    @Request() req: ExpressRequest,
-    @Body() dto: UpdateArnDto,
-  ) {
+  async updateArn(@Request() req: ExpressRequest, @Body() dto: UpdateArnDto) {
     const tenantId = this.getTenantId(req);
     const connection = await this.hmrcService.updateArn(tenantId, dto.arn);
     return { arn: connection.arn };
@@ -117,7 +111,12 @@ export class HmrcController {
   async validateFraudHeaders(@Request() req: ExpressRequest) {
     const tenantId = this.getTenantId(req);
     const u = req.user as { email?: string; loginAt?: number; mfaAuthenticated?: boolean };
-    const fraudContext = buildHmrcFraudRequestContext(req, u.email ?? '', u.loginAt, u.mfaAuthenticated);
+    const fraudContext = buildHmrcFraudRequestContext(
+      req,
+      u.email ?? '',
+      u.loginAt,
+      u.mfaAuthenticated,
+    );
     const result = await this.hmrcService.validateFraudHeaders(tenantId, fraudContext);
     const summary = summarizeFraudValidation(result);
     return { ...summary, ...result };

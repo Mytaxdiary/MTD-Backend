@@ -70,9 +70,17 @@ export function validateRows(
       } else {
         const hash = computeHash(ninoClean);
         if (seenHashes.has(hash)) {
-          errors.push({ row: r, field: 'nino', message: 'Duplicate NINO: this NINO appears more than once in the file' });
+          errors.push({
+            row: r,
+            field: 'nino',
+            message: 'Duplicate NINO: this NINO appears more than once in the file',
+          });
         } else if (existingNinoHashes.has(hash)) {
-          errors.push({ row: r, field: 'nino', message: 'A client with this NINO already exists in your account' });
+          errors.push({
+            row: r,
+            field: 'nino',
+            message: 'A client with this NINO already exists in your account',
+          });
         } else {
           seenHashes.add(hash);
         }
@@ -97,11 +105,19 @@ export function validateRows(
     }
 
     if (row.agent_type && !VALID_AGENT_TYPES.has(row.agent_type.trim().toLowerCase())) {
-      errors.push({ row: r, field: 'agent_type', message: 'agent_type must be "main" or "supporting"' });
+      errors.push({
+        row: r,
+        field: 'agent_type',
+        message: 'agent_type must be "main" or "supporting"',
+      });
     }
 
     if (row.personal_message && row.personal_message.trim().length > 1000) {
-      errors.push({ row: r, field: 'personal_message', message: 'Personal message must be 1000 characters or less' });
+      errors.push({
+        row: r,
+        field: 'personal_message',
+        message: 'Personal message must be 1000 characters or less',
+      });
     }
   }
 

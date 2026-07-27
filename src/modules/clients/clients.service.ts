@@ -171,9 +171,11 @@ export class ClientsService {
     }
 
     // Create portal account + send invite email (fire-and-forget — never blocks client creation)
-    void this.portalService.createAndInvite(tenantId, client.id, dto.email, dto.name).catch((err) =>
-      this.logger.warn(`Portal invite failed for client ${client.id}: ${String(err)}`),
-    );
+    void this.portalService
+      .createAndInvite(tenantId, client.id, dto.email, dto.name)
+      .catch((err) =>
+        this.logger.warn(`Portal invite failed for client ${client.id}: ${String(err)}`),
+      );
 
     return this.sendHmrcInvitationForClient({
       client,
@@ -244,8 +246,14 @@ export class ClientsService {
     tenantId: string,
     query: ListClientsQueryDto = {},
     fraudContext?: HmrcFraudRequestContext | null,
-  ): Promise<{ clients: Client[]; total: number; page: number; limit: number; totalPages: number }> {
-    const page  = Math.max(1, Number(query.page)  || 1);
+  ): Promise<{
+    clients: Client[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
     const status = query.status ?? 'all';
     const search = (query.search ?? '').trim().toLowerCase();
@@ -285,16 +293,14 @@ export class ClientsService {
     // Search in-memory (names are encrypted — cannot use DB LIKE)
     if (search) {
       all = all.filter(
-        (c) =>
-          c.name.toLowerCase().includes(search) ||
-          c.nino.toLowerCase().includes(search),
+        (c) => c.name.toLowerCase().includes(search) || c.nino.toLowerCase().includes(search),
       );
     }
 
-    const total      = all.length;
+    const total = all.length;
     const totalPages = Math.max(1, Math.ceil(total / limit));
-    const safePage   = Math.min(page, totalPages);
-    const offset     = (safePage - 1) * limit;
+    const safePage = Math.min(page, totalPages);
+    const offset = (safePage - 1) * limit;
 
     return {
       clients: all.slice(offset, offset + limit),
@@ -722,7 +728,9 @@ export class ClientsService {
     try {
       return text ? (JSON.parse(text) as T) : ({} as T);
     } catch {
-      throw new InternalServerErrorException('HMRC returned invalid JSON for account transactions.');
+      throw new InternalServerErrorException(
+        'HMRC returned invalid JSON for account transactions.',
+      );
     }
   }
 
@@ -804,10 +812,10 @@ export class ClientsService {
   ): Promise<void> {
     const toSync = clients.filter((c) => this.needsHmrcStatusSync(c));
     if (toSync.length === 0) return;
-    
+
     const connection = await this.hmrcService.getStatus(tenantId);
     if (!connection?.arn) return;
-    
+
     let accessToken: string;
     try {
       accessToken = await this.hmrcService.getValidAccessToken(tenantId);
@@ -815,7 +823,6 @@ export class ClientsService {
       this.logger.warn(`Skipping HMRC invitation sync for tenant ${tenantId}`, err);
       return;
     }
-
 
     await Promise.allSettled(
       toSync.map((client) =>
@@ -926,8 +933,7 @@ export class ClientsService {
     fraudContext?: HmrcFraudRequestContext | null,
   ): Promise<void> {
     const needsCheck = clients.filter(
-      (c) =>
-        ['accepted', 'partial-auth'].includes(c.invitationStatus) && !c.authorisedAt,
+      (c) => ['accepted', 'partial-auth'].includes(c.invitationStatus) && !c.authorisedAt,
     );
     if (needsCheck.length === 0) return;
 
@@ -983,12 +989,7 @@ export class ClientsService {
     fraudContext?: HmrcFraudRequestContext | null,
   ): Promise<boolean> {
     try {
-      const result = await this.verifyHmrcRelationship(
-        client,
-        arn,
-        accessToken,
-        fraudContext,
-      );
+      const result = await this.verifyHmrcRelationship(client, arn, accessToken, fraudContext);
       if (result === 'active') {
         if (!client.authorisedAt) {
           client.authorisedAt = new Date();
@@ -1072,8 +1073,7 @@ export class ClientsService {
     personalMessage?: string;
     fraudContext?: HmrcFraudRequestContext | null;
   }): Promise<CreateClientResult> {
-    const { client, arn, accessToken, agentName, firmName, personalMessage, fraudContext } =
-      params;
+    const { client, arn, accessToken, agentName, firmName, personalMessage, fraudContext } = params;
 
     try {
       const invitationId = await this.createHmrcInvitation({
@@ -1200,7 +1200,9 @@ export class ClientsService {
     }
 
     if (rows.length > 200) {
-      throw new BadRequestException('A single import can contain at most 200 clients. Split the file and import in batches.');
+      throw new BadRequestException(
+        'A single import can contain at most 200 clients. Split the file and import in batches.',
+      );
     }
 
     // 2. Load existing NINO hashes for this tenant (one DB query, not N)
@@ -1273,12 +1275,13 @@ export class ClientsService {
       `${this.hmrcBaseUrl}/individuals/business/details/` +
       `${encodeURIComponent(client.nino)}/list`;
 
-    const listRes = await this.fetchHmrcBusinessJson<{ listOfBusinesses?: Array<{ businessId: string; typeOfBusiness: string; tradingName?: string }> }>(
-      businessListUrl,
-      accessToken,
-      fraudContext,
-      businessErrorToUserMessage,
-    );
+    const listRes = await this.fetchHmrcBusinessJson<{
+      listOfBusinesses?: Array<{
+        businessId: string;
+        typeOfBusiness: string;
+        tradingName?: string;
+      }>;
+    }>(businessListUrl, accessToken, fraudContext, businessErrorToUserMessage);
 
     const businesses = listRes.listOfBusinesses ?? [];
 
@@ -1394,7 +1397,13 @@ export class ClientsService {
     authorName: string,
   ): Promise<ClientNote> {
     await this.assertClientBelongsToTenant(tenantId, clientId);
-    const note = this.clientNoteRepo.create({ tenantId, clientId, text, authorName, isPinned: false });
+    const note = this.clientNoteRepo.create({
+      tenantId,
+      clientId,
+      text,
+      authorName,
+      isPinned: false,
+    });
     return this.clientNoteRepo.save(note);
   }
 

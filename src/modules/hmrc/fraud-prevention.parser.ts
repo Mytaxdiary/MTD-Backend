@@ -1,5 +1,8 @@
 import type { Request } from 'express';
-import type { FraudPreventionClientPayload, HmrcFraudRequestContext } from './fraud-prevention.types';
+import type {
+  FraudPreventionClientPayload,
+  HmrcFraudRequestContext,
+} from './fraud-prevention.types';
 import { isPublicIpv4, normalizeIp } from './fraud-prevention.ip.util';
 
 const FRAUD_HEADER = 'x-hmrc-fraud-context';

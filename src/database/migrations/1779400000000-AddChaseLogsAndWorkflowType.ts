@@ -43,8 +43,6 @@ export class AddChaseLogsAndWorkflowType1779400000000 implements MigrationInterf
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP TABLE IF EXISTS \`chase_logs\``);
-    await queryRunner.query(
-      `ALTER TABLE \`clients\` DROP COLUMN IF EXISTS \`workflow_type\``,
-    );
+    await queryRunner.query(`ALTER TABLE \`clients\` DROP COLUMN IF EXISTS \`workflow_type\``);
   }
 }

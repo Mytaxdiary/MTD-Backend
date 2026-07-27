@@ -62,7 +62,6 @@ function hashEmail(email: string, secret: string): string {
 export class PortalService {
   private readonly logger = new Logger(PortalService.name);
 
-
   constructor(
     @InjectRepository(ClientUser)
     private readonly clientUserRepo: Repository<ClientUser>,
@@ -95,7 +94,8 @@ export class PortalService {
   ): Promise<void> {
     // Upsert — avoid duplicate if already exists (e.g. re-invite)
     let cu = await this.clientUserRepo.findOne({ where: { clientId } });
-    const frontendUrl = this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+    const frontendUrl =
+      this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
     const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
     const firmName = tenant?.firmName ?? 'Your accountancy firm';
 
@@ -142,7 +142,9 @@ export class PortalService {
     });
     if (!cu) throw new BadRequestException('Invalid or expired setup link');
     if (!cu.portalSetupTokenExpiresAt || cu.portalSetupTokenExpiresAt < new Date()) {
-      throw new BadRequestException('This setup link has expired. Ask your accountant to resend the invitation.');
+      throw new BadRequestException(
+        'This setup link has expired. Ask your accountant to resend the invitation.',
+      );
     }
 
     cu.passwordHash = await hashPassword(dto.password);
@@ -216,7 +218,7 @@ export class PortalService {
         headers: { Accept: 'application/vnd.hmrc.3.0+json' },
       });
       if (!res.ok) return { message: 'Could not load obligations from HMRC', obligations: [] };
-      const data = await res.json() as { obligations?: unknown[] };
+      const data = (await res.json()) as { obligations?: unknown[] };
       return { obligations: data.obligations ?? [] };
     } catch (err) {
       this.logger.warn(`Portal obligations fetch failed: ${String(err)}`);
@@ -227,7 +229,8 @@ export class PortalService {
   async getLiabilities(clientId: string, tenantId: string) {
     const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
     if (!client) throw new NotFoundException('Client not found');
-    if (!client.authorisedAt) return { message: 'HMRC authorisation pending', balanceDetails: null };
+    if (!client.authorisedAt)
+      return { message: 'HMRC authorisation pending', balanceDetails: null };
 
     try {
       const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
@@ -291,7 +294,8 @@ export class PortalService {
     await this.portalMsgRepo.save(msg);
 
     // Email notification to client
-    const frontendUrl = this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+    const frontendUrl =
+      this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
     try {
       await this.mailService.sendPortalMessage(client.email, {
         clientName: client.name,
@@ -348,7 +352,8 @@ export class PortalService {
     // Notify agent by email (fire-and-forget)
     const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
     const agentEmail = tenant?.contactEmail;
-    const frontendUrl = this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+    const frontendUrl =
+      this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
     if (agentEmail) {
       void this.mailService
         .sendPortalFileUploaded(agentEmail, {
@@ -359,9 +364,7 @@ export class PortalService {
           fileSize: formatBytes(file.size),
           clientDetailUrl: `${frontendUrl}/clients/detail?id=${clientId}`,
         })
-        .catch((err) =>
-          this.logger.warn(`File upload notification email failed: ${String(err)}`),
-        );
+        .catch((err) => this.logger.warn(`File upload notification email failed: ${String(err)}`));
     }
 
     return record;
@@ -398,7 +401,11 @@ export class PortalService {
     return files;
   }
 
-  async getFileRecordForAgent(tenantId: string, clientId: string, fileId: string): Promise<PortalFile> {
+  async getFileRecordForAgent(
+    tenantId: string,
+    clientId: string,
+    fileId: string,
+  ): Promise<PortalFile> {
     const f = await this.portalFileRepo.findOne({ where: { id: fileId, tenantId, clientId } });
     if (!f) throw new NotFoundException('File not found');
     return f;
@@ -441,7 +448,13 @@ export class PortalService {
       if (!payload.isPreview) throw new Error('Not a preview token');
       // Re-sign as a fresh 15-min token (the original could be near expiry)
       const fresh = this.jwtService.sign(
-        { sub: 'preview', clientId: payload.clientId, tenantId: payload.tenantId, role: 'client', isPreview: true },
+        {
+          sub: 'preview',
+          clientId: payload.clientId,
+          tenantId: payload.tenantId,
+          role: 'client',
+          isPreview: true,
+        },
         { expiresIn: '15m' },
       );
       return { valid: true, accessToken: fresh };

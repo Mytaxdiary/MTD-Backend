@@ -17,8 +17,7 @@ export class ChaseController {
 
   @Get('clients')
   @ApiOperation({
-    summary:
-      'List all authorised clients with their chase summary and current quarter deadline',
+    summary: 'List all authorised clients with their chase summary and current quarter deadline',
   })
   listNeedsChasing(@Request() req: ExpressRequest) {
     const { tenantId } = req.user as RequestUser;

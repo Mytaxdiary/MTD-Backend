@@ -39,10 +39,7 @@ export class ChaseLogsController {
   @Get()
   @ApiOperation({ summary: 'List chase logs for a client' })
   @ApiQuery({ name: 'clientId', required: true })
-  listByClient(
-    @Request() req: ExpressRequest,
-    @Query('clientId') clientId: string,
-  ) {
+  listByClient(@Request() req: ExpressRequest, @Query('clientId') clientId: string) {
     return this.service.listByClient(this.tid(req), clientId);
   }
 

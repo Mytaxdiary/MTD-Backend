@@ -24,9 +24,7 @@ export function normalizeTaxYear(raw: string): string {
     return trimmed;
   }
 
-  throw new BadRequestException(
-    'Invalid tax year format. Use e.g. 2024-25 (not 2024-2025).',
-  );
+  throw new BadRequestException('Invalid tax year format. Use e.g. 2024-25 (not 2024-2025).');
 }
 
 /** Current UK tax year label (6 April boundary). */

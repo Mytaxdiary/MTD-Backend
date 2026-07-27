@@ -12,7 +12,13 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Response, Request as ExpressRequest } from 'express';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiOkResponse, ApiCreatedResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiCreatedResponse,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { RequestUser } from '../auth/strategies/jwt.strategy';
 import { AccountService } from './account.service';
@@ -60,10 +66,7 @@ export class AccountController {
   @Throttle({ default: { ttl: 60_000, limit: 3 } })
   @ApiOperation({ summary: 'Request account and data deletion (7-day grace period)' })
   @ApiCreatedResponse({ description: 'Deletion request created, executeAt returned' })
-  async requestDeletion(
-    @Body() dto: DeletionRequestDto,
-    @Request() req: AuthRequest,
-  ) {
+  async requestDeletion(@Body() dto: DeletionRequestDto, @Request() req: AuthRequest) {
     return this.accountService.requestDeletion(req.user.userId, dto.password, dto.mfaCode);
   }
 

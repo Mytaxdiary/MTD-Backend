@@ -116,7 +116,9 @@ export class AuthController {
 
   @Post('mfa/verify')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Complete MFA login — exchange challenge token + TOTP code for full session' })
+  @ApiOperation({
+    summary: 'Complete MFA login — exchange challenge token + TOTP code for full session',
+  })
   async mfaVerify(@Body() dto: VerifyMfaDto, @Res({ passthrough: true }) res: Response) {
     const result = await this.authService.verifyMfaChallenge(dto.mfaToken, dto.code);
     this.setAuthCookies(res, result.accessToken, result.refreshToken);

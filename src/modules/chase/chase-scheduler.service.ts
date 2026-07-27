@@ -91,8 +91,7 @@ export class ChaseSchedulerService {
       // ── Decide whether this client needs a chase today ──────────────────────
 
       const isOverdue = client.daysOverdue >= 1;
-      const isUpcoming =
-        client.daysOverdue >= -UPCOMING_TRIGGER_DAYS && client.daysOverdue < 0;
+      const isUpcoming = client.daysOverdue >= -UPCOMING_TRIGGER_DAYS && client.daysOverdue < 0;
 
       if (!isOverdue && !isUpcoming) {
         skipped++;
@@ -102,9 +101,7 @@ export class ChaseSchedulerService {
       // ── Cooldown check — skip if chased recently ────────────────────────────
       if (client.lastChase) {
         const lastChaseDate = new Date(client.lastChase);
-        const daysSince = Math.floor(
-          (now.getTime() - lastChaseDate.getTime()) / 86_400_000,
-        );
+        const daysSince = Math.floor((now.getTime() - lastChaseDate.getTime()) / 86_400_000);
         if (daysSince < CHASE_COOLDOWN_DAYS) {
           skipped++;
           continue;
@@ -112,11 +109,7 @@ export class ChaseSchedulerService {
       }
 
       // ── Pick template ────────────────────────────────────────────────────────
-      const template = this.pickTemplate(
-        templates,
-        client.workflowType,
-        isOverdue,
-      );
+      const template = this.pickTemplate(templates, client.workflowType, isOverdue);
 
       if (!template) {
         this.logger.warn(
@@ -175,7 +168,14 @@ export class ChaseSchedulerService {
    *   general / unknown      → first available default template
    */
   private pickTemplate(
-    templates: { id: string; name: string; type: string; subject: string; body: string; isDefault: boolean }[],
+    templates: {
+      id: string;
+      name: string;
+      type: string;
+      subject: string;
+      body: string;
+      isDefault: boolean;
+    }[],
     workflowType: string,
     isOverdue: boolean,
   ) {

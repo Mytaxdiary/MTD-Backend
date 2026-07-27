@@ -84,11 +84,7 @@ export class ChaseLogsService {
   /**
    * Update the status of a chase log (e.g. opened, responded, bounced).
    */
-  async updateStatus(
-    tenantId: string,
-    id: string,
-    status: string,
-  ): Promise<ChaseLog> {
+  async updateStatus(tenantId: string, id: string, status: string): Promise<ChaseLog> {
     const log = await this.repo.findOne({
       where: { id, tenantId, deletedAt: IsNull() },
     });

@@ -69,11 +69,7 @@ export class ChaseTemplatesService {
     return this.repo.save(template);
   }
 
-  async update(
-    tenantId: string,
-    id: string,
-    dto: UpdateChaseTemplateDto,
-  ): Promise<ChaseTemplate> {
+  async update(tenantId: string, id: string, dto: UpdateChaseTemplateDto): Promise<ChaseTemplate> {
     const template = await this.repo.findOne({
       where: { id, tenantId, deletedAt: IsNull() },
     });

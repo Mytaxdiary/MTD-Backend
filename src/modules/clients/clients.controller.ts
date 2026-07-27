@@ -145,12 +145,7 @@ export class ClientsController {
     @Param('businessId') businessId: string,
   ) {
     const { tenantId } = req.user as RequestUser;
-    return this.clientsService.getBusinessDetails(
-      tenantId,
-      id,
-      businessId,
-      this.fraudContext(req),
-    );
+    return this.clientsService.getBusinessDetails(tenantId, id, businessId, this.fraudContext(req));
   }
 
   /** Income & expenditure obligations (Obligations MTD v3.0) */
@@ -373,17 +368,9 @@ export class ClientsController {
       },
     }),
   )
-  async bulkImport(
-    @Request() req: ExpressRequest,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
+  async bulkImport(@Request() req: ExpressRequest, @UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file uploaded. Please attach a CSV file.');
     const { tenantId, email } = req.user as RequestUser;
-    return this.clientsService.bulkImport(
-      tenantId,
-      email,
-      file.buffer,
-      this.fraudContext(req),
-    );
+    return this.clientsService.bulkImport(tenantId, email, file.buffer, this.fraudContext(req));
   }
 }

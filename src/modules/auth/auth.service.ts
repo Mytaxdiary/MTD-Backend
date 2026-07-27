@@ -173,7 +173,9 @@ export class AuthService {
    * Returns a short-lived setupToken (JWT) so the secret is passed securely
    * when the user calls enableMfa().
    */
-  async setupMfa(userId: string): Promise<{ secret: string; otpauthUrl: string; setupToken: string }> {
+  async setupMfa(
+    userId: string,
+  ): Promise<{ secret: string; otpauthUrl: string; setupToken: string }> {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException();
 
@@ -206,9 +208,10 @@ export class AuthService {
     }
 
     const encryptionKey = this.configService.get<string>('hmrc.encryptionKey');
-    const plainSecret = encryptionKey && isEncrypted(payload.totpSecret)
-      ? decrypt(payload.totpSecret, encryptionKey)
-      : payload.totpSecret;
+    const plainSecret =
+      encryptionKey && isEncrypted(payload.totpSecret)
+        ? decrypt(payload.totpSecret, encryptionKey)
+        : payload.totpSecret;
 
     const isValid = authenticator.verify({ token: code, secret: plainSecret });
     if (!isValid) {
@@ -232,9 +235,10 @@ export class AuthService {
     }
 
     const encryptionKey = this.configService.get<string>('hmrc.encryptionKey');
-    const plainSecret = encryptionKey && isEncrypted(user.totpSecret)
-      ? decrypt(user.totpSecret, encryptionKey)
-      : user.totpSecret;
+    const plainSecret =
+      encryptionKey && isEncrypted(user.totpSecret)
+        ? decrypt(user.totpSecret, encryptionKey)
+        : user.totpSecret;
 
     const isValid = authenticator.verify({ token: code, secret: plainSecret });
     if (!isValid) throw new BadRequestException('Invalid code. Please try again.');
@@ -262,9 +266,10 @@ export class AuthService {
     }
 
     const encryptionKey = this.configService.get<string>('hmrc.encryptionKey');
-    const plainSecret = encryptionKey && isEncrypted(user.totpSecret)
-      ? decrypt(user.totpSecret, encryptionKey)
-      : user.totpSecret;
+    const plainSecret =
+      encryptionKey && isEncrypted(user.totpSecret)
+        ? decrypt(user.totpSecret, encryptionKey)
+        : user.totpSecret;
 
     const isValid = authenticator.verify({ token: code, secret: plainSecret });
     if (!isValid) throw new UnauthorizedException('Invalid code. Please try again.');

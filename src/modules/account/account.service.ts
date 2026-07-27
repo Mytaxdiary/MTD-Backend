@@ -1,7 +1,14 @@
 import * as archiver from 'archiver';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Injectable, UnauthorizedException, BadRequestException, ConflictException, NotFoundException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
 import { In, LessThanOrEqual, Repository, DataSource } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -80,16 +87,23 @@ export class AccountService {
     const clients = await this.clientRepo.find({ where: { tenantId } });
     const clientIds = clients.map((c) => c.id);
 
-    const [notes, chaseLogs, chaseTemplates, notifications, portalMessages, portalFiles, clientUsers] =
-      await Promise.all([
-        clientIds.length ? this.clientNoteRepo.find({ where: { clientId: In(clientIds) } }) : [],
-        clientIds.length ? this.chaseLogRepo.find({ where: { clientId: In(clientIds) } }) : [],
-        this.chaseTemplateRepo.find({ where: { tenantId } }),
-        this.appNotificationRepo.find({ where: { tenantId } }),
-        clientIds.length ? this.portalMessageRepo.find({ where: { clientId: In(clientIds) } }) : [],
-        clientIds.length ? this.portalFileRepo.find({ where: { clientId: In(clientIds) } }) : [],
-        clientIds.length ? this.clientUserRepo.find({ where: { clientId: In(clientIds) } }) : [],
-      ]);
+    const [
+      notes,
+      chaseLogs,
+      chaseTemplates,
+      notifications,
+      portalMessages,
+      portalFiles,
+      clientUsers,
+    ] = await Promise.all([
+      clientIds.length ? this.clientNoteRepo.find({ where: { clientId: In(clientIds) } }) : [],
+      clientIds.length ? this.chaseLogRepo.find({ where: { clientId: In(clientIds) } }) : [],
+      this.chaseTemplateRepo.find({ where: { tenantId } }),
+      this.appNotificationRepo.find({ where: { tenantId } }),
+      clientIds.length ? this.portalMessageRepo.find({ where: { clientId: In(clientIds) } }) : [],
+      clientIds.length ? this.portalFileRepo.find({ where: { clientId: In(clientIds) } }) : [],
+      clientIds.length ? this.clientUserRepo.find({ where: { clientId: In(clientIds) } }) : [],
+    ]);
 
     // Strip sensitive fields before export
     const safeUsers = users.map(({ passwordHash, totpSecret, ...rest }) => rest);
@@ -110,9 +124,7 @@ export class AccountService {
     };
 
     // Build CSV for clients
-    const clientCsv = this.toCsv(
-      clients.map(({ ninoHash: _nh, ...rest }) => rest),
-    );
+    const clientCsv = this.toCsv(clients.map(({ ninoHash: _nh, ...rest }) => rest));
 
     // Build ZIP and stream to response
     res.setHeader('Content-Type', 'application/zip');
@@ -138,7 +150,9 @@ export class AccountService {
     // Include uploaded portal files
     for (const file of portalFiles) {
       if (fs.existsSync(file.storagePath)) {
-        archive.file(file.storagePath, { name: `portal-files/${file.clientId}/${file.originalName}` });
+        archive.file(file.storagePath, {
+          name: `portal-files/${file.clientId}/${file.originalName}`,
+        });
       }
     }
 
@@ -149,7 +163,9 @@ export class AccountService {
 
   // ── Deletion request ──────────────────────────────────────────────────────
 
-  async getDeletionStatus(userId: string): Promise<{ status: string; executeAt: string | null } | null> {
+  async getDeletionStatus(
+    userId: string,
+  ): Promise<{ status: string; executeAt: string | null } | null> {
     const req = await this.deletionRequestRepo.findOne({
       where: { userId, status: 'pending' },
       order: { createdAt: 'DESC' },
@@ -159,7 +175,11 @@ export class AccountService {
     return { status: req.status, executeAt: new Date(req.executeAt).toISOString() };
   }
 
-  async requestDeletion(userId: string, password: string, mfaCode?: string): Promise<{ executeAt: string }> {
+  async requestDeletion(
+    userId: string,
+    password: string,
+    mfaCode?: string,
+  ): Promise<{ executeAt: string }> {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
@@ -169,18 +189,25 @@ export class AccountService {
 
     // Step-up: verify MFA if enabled
     if (user.mfaEnabled) {
-      if (!mfaCode) throw new BadRequestException('Your account has 2FA enabled. Please provide your authenticator code.');
+      if (!mfaCode)
+        throw new BadRequestException(
+          'Your account has 2FA enabled. Please provide your authenticator code.',
+        );
       const encKey = this.configService.get<string>('hmrc.encryptionKey');
-      const plain = encKey && isEncrypted(user.totpSecret ?? '')
-        ? decrypt(user.totpSecret!, encKey)
-        : (user.totpSecret ?? '');
+      const plain =
+        encKey && isEncrypted(user.totpSecret ?? '')
+          ? decrypt(user.totpSecret!, encKey)
+          : (user.totpSecret ?? '');
       const valid = authenticator.verify({ token: mfaCode.replace(/\s/g, ''), secret: plain });
       if (!valid) throw new BadRequestException('Invalid authenticator code. Please try again.');
     }
 
     // Only one pending request allowed at a time
-    const existing = await this.deletionRequestRepo.findOne({ where: { userId, status: 'pending' } });
-    if (existing) throw new ConflictException('A deletion request is already pending for this account.');
+    const existing = await this.deletionRequestRepo.findOne({
+      where: { userId, status: 'pending' },
+    });
+    if (existing)
+      throw new ConflictException('A deletion request is already pending for this account.');
 
     const executeAt = new Date();
     executeAt.setDate(executeAt.getDate() + GRACE_DAYS);
@@ -194,15 +221,24 @@ export class AccountService {
     });
     await this.deletionRequestRepo.save(req);
 
-    const frontendUrl = this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
-    await this.mailService.sendDeletionRequestEmail({
-      to: user.email,
-      firstName: user.firstName,
-      executeDate: executeAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
-      settingsUrl: `${frontendUrl}/settings?section=data-privacy`,
-    }).catch((e) => this.logger.error('Failed to send deletion request email', e));
+    const frontendUrl =
+      this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+    await this.mailService
+      .sendDeletionRequestEmail({
+        to: user.email,
+        firstName: user.firstName,
+        executeDate: executeAt.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        }),
+        settingsUrl: `${frontendUrl}/settings?section=data-privacy`,
+      })
+      .catch((e) => this.logger.error('Failed to send deletion request email', e));
 
-    this.logger.warn(`Deletion request created for user ${userId}, executes at ${executeAt.toISOString()}`);
+    this.logger.warn(
+      `Deletion request created for user ${userId}, executes at ${executeAt.toISOString()}`,
+    );
     return { executeAt: executeAt.toISOString() };
   }
 
@@ -215,10 +251,12 @@ export class AccountService {
 
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (user) {
-      await this.mailService.sendDeletionCancelledEmail({
-        to: user.email,
-        firstName: user.firstName,
-      }).catch((e) => this.logger.error('Failed to send deletion cancelled email', e));
+      await this.mailService
+        .sendDeletionCancelledEmail({
+          to: user.email,
+          firstName: user.firstName,
+        })
+        .catch((e) => this.logger.error('Failed to send deletion cancelled email', e));
     }
 
     this.logger.log(`Deletion request cancelled for user ${userId}`);
@@ -237,7 +275,9 @@ export class AccountService {
     for (const req of due) {
       try {
         await this.executeAccountDeletion(req);
-        this.logger.warn(`Account deletion executed for user ${req.userId} (tenant ${req.tenantId})`);
+        this.logger.warn(
+          `Account deletion executed for user ${req.userId} (tenant ${req.tenantId})`,
+        );
       } catch (err) {
         this.logger.error(`Failed to execute deletion for user ${req.userId}`, err);
       }
@@ -267,10 +307,14 @@ export class AccountService {
       await manager.softDelete(User, { id: userId });
 
       // Mark the request as completed
-      await manager.update(DeletionRequest, { id: req.id }, {
-        status: 'completed',
-        executedAt: new Date(),
-      });
+      await manager.update(
+        DeletionRequest,
+        { id: req.id },
+        {
+          status: 'completed',
+          executedAt: new Date(),
+        },
+      );
     });
 
     // Delete portal files from disk
@@ -287,9 +331,7 @@ export class AccountService {
     const headers = Object.keys(rows[0]);
     const lines = [
       headers.join(','),
-      ...rows.map((r) =>
-        headers.map((h) => JSON.stringify(r[h] ?? '')).join(','),
-      ),
+      ...rows.map((r) => headers.map((h) => JSON.stringify(r[h] ?? '')).join(',')),
     ];
     return lines.join('\n');
   }

@@ -1,4 +1,12 @@
-import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, Matches } from 'class-validator';
+import {
+  IsEmail,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Matches,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateClientDto {
@@ -10,7 +18,9 @@ export class CreateClientDto {
 
   @ApiProperty({ example: 'BZ394384A', description: '9-character NINO without spaces' })
   @IsString()
-  @Matches(/^[A-Z]{2}\d{6}[A-D]$/i, { message: 'NINO must be 2 letters, 6 digits, 1 letter (e.g. BZ394384A)' })
+  @Matches(/^[A-Z]{2}\d{6}[A-D]$/i, {
+    message: 'NINO must be 2 letters, 6 digits, 1 letter (e.g. BZ394384A)',
+  })
   nino: string;
 
   @ApiProperty({ example: 'TS24 1PA' })

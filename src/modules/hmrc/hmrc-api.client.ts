@@ -15,7 +15,7 @@ import { retryWithBackoff, type RetryOptions } from './hmrc-retry.util';
  */
 const TLS_ORDER = ['TLSv1', 'TLSv1.1', 'TLSv1.2', 'TLSv1.3'] as const;
 const currentMin = tls.DEFAULT_MIN_VERSION ?? 'TLSv1';
-if (TLS_ORDER.indexOf(currentMin as typeof TLS_ORDER[number]) < TLS_ORDER.indexOf('TLSv1.2')) {
+if (TLS_ORDER.indexOf(currentMin as (typeof TLS_ORDER)[number]) < TLS_ORDER.indexOf('TLSv1.2')) {
   throw new Error(
     `[HmrcApiClient] TLS minimum version is ${currentMin} — TLSv1.2 or above is required for HMRC API compliance.`,
   );

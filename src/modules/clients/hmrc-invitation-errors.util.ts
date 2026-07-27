@@ -81,9 +81,7 @@ export function relationshipErrorToUserMessage(httpStatus: number, responseText:
   }
 
   if (code === 'NO_PERMISSION_ON_AGENCY') {
-    return (
-      'The ARN in Settings does not match your HMRC connection. Correct your ARN and try again.'
-    );
+    return 'The ARN in Settings does not match your HMRC connection. Correct your ARN and try again.';
   }
 
   if (httpStatus === 401) {

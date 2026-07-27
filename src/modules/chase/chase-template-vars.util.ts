@@ -53,8 +53,8 @@ function taxYearQuarters(taxYearStart: number): QuarterInfo[] {
   const label = (q: number) => `Q${q} ${y}–${String(y + 1).slice(2)}`;
 
   const quarters: { q: number; deadline: Date }[] = [
-    { q: 1, deadline: new Date(y, 7, 7) },   // Aug 7
-    { q: 2, deadline: new Date(y, 10, 7) },  // Nov 7
+    { q: 1, deadline: new Date(y, 7, 7) }, // Aug 7
+    { q: 2, deadline: new Date(y, 10, 7) }, // Nov 7
     { q: 3, deadline: new Date(y + 1, 1, 7) }, // Feb 7 next year
     { q: 4, deadline: new Date(y + 1, 4, 7) }, // May 7 next year
   ];
@@ -81,8 +81,7 @@ function taxYearQuarters(taxYearStart: number): QuarterInfo[] {
 export function currentChaseQuarter(): QuarterInfo {
   const now = new Date();
   // Current UK tax year: starts 6 Apr
-  const taxYearStart =
-    now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  const taxYearStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
 
   const quarters = taxYearQuarters(taxYearStart);
 
