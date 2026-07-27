@@ -1,0 +1,107 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: deploy-mtd-backend
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  APP_DIR: /var/www/mtd/backend
+  PM2_NAME: mtd-backend
+  HEALTH_URL: http://localhost:3500/api/v1/health
+
+jobs:
+  verify:
+    name: Lint, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Unit tests
+        run: npm test -- --passWithNoTests
+
+      - name: Production build (CI verification)
+        run: npm run build
+
+  deploy:
+    name: Deploy to Hetzner
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            echo "==> Deploying backend to ${{ env.APP_DIR }}"
+            cd "${{ env.APP_DIR }}"
+
+            if [ "$(id -u)" -eq 0 ]; then
+              echo "ERROR: Refusing to deploy as root. Use a non-root deploy user."
+              exit 1
+            fi
+
+            echo "==> Fetching latest main"
+            git fetch origin main
+            git checkout main
+            # Discard local edits to tracked files (e.g. package-lock.json drift from npm install).
+            # Untracked files like .env and uploads are left untouched.
+            git restore .
+            git merge --ff-only origin/main
+
+            echo "==> Installing dependencies"
+            npm ci
+
+            echo "==> Running database migrations"
+            npm run migration:run
+
+            echo "==> Building NestJS production bundle"
+            npm run build
+
+            echo "==> Restarting PM2 process ${{ env.PM2_NAME }}"
+            pm2 restart "${{ env.PM2_NAME }}" --update-env
+            pm2 save
+
+            echo "==> Health check on ${{ env.HEALTH_URL }}"
+            for i in 1 2 3 4 5 6; do
+              if curl -fsS --max-time 10 "${{ env.HEALTH_URL }}" >/dev/null; then
+                echo "Backend health check passed."
+                exit 0
+              fi
+              echo "Attempt $i failed, retrying in 5s..."
+              sleep 5
+            done
+
+            echo "ERROR: Backend health check failed at ${{ env.HEALTH_URL }} after deploy."
+            exit 1
