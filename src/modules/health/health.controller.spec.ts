@@ -1,7 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { HealthController } from './health.controller';
 import { HealthService } from './health.service';
+import { MailService } from '../mail/mail.service';
 
 const mockDataSource = {
   query: jest.fn().mockResolvedValue([{ 1: 1 }]),
@@ -12,9 +14,23 @@ describe('HealthController', () => {
   let controller: HealthController;
 
   beforeEach(async () => {
+    mockDataSource.query.mockReset();
+    mockDataSource.query.mockResolvedValue([{ 1: 1 }]);
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [HealthController],
-      providers: [HealthService, { provide: getDataSourceToken(), useValue: mockDataSource }],
+      providers: [
+        HealthService,
+        { provide: getDataSourceToken(), useValue: mockDataSource },
+        {
+          provide: MailService,
+          useValue: { sendWelcomeEmail: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn().mockReturnValue(undefined) },
+        },
+      ],
     }).compile();
 
     controller = module.get<HealthController>(HealthController);
