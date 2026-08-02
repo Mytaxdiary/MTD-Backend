@@ -50,6 +50,10 @@ import type { GetPaymentsAndAllocationsQueryDto } from './dto/get-payments-and-a
 import { defaultPaymentsDateRange } from './dto/get-payments-and-allocations-query.dto';
 import { accountsErrorToUserMessage } from './hmrc-accounts-errors.util';
 import type { BissResponse, IncomeSummaryResponse } from './hmrc-biss.types';
+import type {
+  SubmittedFiguresResponse,
+  SubmittedPeriodFigure,
+} from './hmrc-period-summaries.types';
 import { ClientNote } from './entities/client-note.entity';
 import { currentUkTaxYear } from './dto/get-income-summary-query.dto';
 import { normalizeTaxYear } from './tax-year.util';
@@ -156,6 +160,7 @@ export class ClientsService {
       email: dto.email,
       phone: dto.phone,
       agentType: dto.agentType ?? 'main',
+      utr: dto.utr ?? undefined,
       invitationStatus: 'pending',
     });
 
@@ -381,6 +386,12 @@ export class ClientsService {
     const client = await this.clientRepo.findOne({ where: { id, tenantId } });
     if (!client) throw new NotFoundException('Client not found');
     return client;
+  }
+
+  async updateClient(tenantId: string, id: string, fields: { utr?: string }): Promise<Client> {
+    const client = await this.findOne(tenantId, id);
+    if (fields.utr !== undefined) client.utr = fields.utr || undefined;
+    return this.clientRepo.save(client);
   }
 
   /** Polls HMRC for the latest invitation status and updates the DB record. */
@@ -1378,6 +1389,371 @@ export class ClientsService {
       'foreign-property-fhl': 'foreign-property-fhl',
     };
     return map[type] ?? null;
+  }
+
+  /**
+   * YTD totals (BISS v3.0) + per-period / cumulative submissions
+   * (Self-Employment Business + Property Business APIs).
+   */
+  async getSubmittedFigures(
+    tenantId: string,
+    clientId: string,
+    taxYear?: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<SubmittedFiguresResponse> {
+    const summary = await this.getIncomeSummary(tenantId, clientId, taxYear, fraudContext);
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const resolvedTaxYear = summary.taxYear;
+    const useCumulative = this.taxYearStartYear(resolvedTaxYear) >= 2025;
+
+    const businesses = await this.listBusinessesLite(client.nino, accessToken, fraudContext);
+    const periods: SubmittedPeriodFigure[] = [];
+
+    for (const biz of businesses) {
+      const bizPeriods = useCumulative
+        ? await this.fetchCumulativePeriod(
+            client.nino,
+            biz,
+            resolvedTaxYear,
+            accessToken,
+            fraudContext,
+          )
+        : await this.fetchLegacyPeriods(
+            client.nino,
+            biz,
+            resolvedTaxYear,
+            accessToken,
+            fraudContext,
+          );
+      periods.push(...bizPeriods);
+    }
+
+    periods.sort((a, b) => (a.periodEndDate ?? '').localeCompare(b.periodEndDate ?? ''));
+
+    // Relabel chronologically as Q1–Q4 when multiple non-cumulative periods exist
+    const nonCumulative = periods.filter((p) => !p.cumulative);
+    if (nonCumulative.length > 0) {
+      nonCumulative.forEach((p, i) => {
+        p.label = `Q${i + 1}`;
+      });
+    }
+
+    let totalIncome = summary.totalIncome;
+    let totalExpenses = summary.totalExpenses;
+    let netProfit = summary.netProfit;
+    let netLoss = summary.netLoss;
+
+    // When BISS has no usable rows, fall back to sanitised period totals for the YTD header
+    const bissEmpty = summary.businesses.length === 0 && totalIncome === 0 && totalExpenses === 0;
+    if (bissEmpty && periods.length > 0) {
+      totalIncome = periods.reduce((s, p) => s + p.income, 0);
+      totalExpenses = periods.reduce((s, p) => s + p.expenses, 0);
+      const net = totalIncome - totalExpenses;
+      netProfit = net > 0 ? net : 0;
+      netLoss = net < 0 ? Math.abs(net) : 0;
+    }
+
+    return {
+      taxYear: resolvedTaxYear,
+      totalIncome,
+      totalExpenses,
+      netProfit,
+      netLoss,
+      periods,
+      businesses: summary.businesses,
+    };
+  }
+
+  private taxYearStartYear(taxYear: string): number {
+    return parseInt(taxYear.split('-')[0] ?? '0', 10);
+  }
+
+  private async listBusinessesLite(
+    nino: string,
+    accessToken: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<Array<{ businessId: string; typeOfBusiness: string; tradingName?: string }>> {
+    const url =
+      `${this.hmrcBaseUrl}/individuals/business/details/` + `${encodeURIComponent(nino)}/list`;
+    const listRes = await this.fetchHmrcBusinessJson<{
+      listOfBusinesses?: Array<{
+        businessId: string;
+        typeOfBusiness: string;
+        tradingName?: string;
+      }>;
+    }>(url, accessToken, fraudContext, businessErrorToUserMessage);
+    return listRes.listOfBusinesses ?? [];
+  }
+
+  private async fetchCumulativePeriod(
+    nino: string,
+    biz: { businessId: string; typeOfBusiness: string; tradingName?: string },
+    taxYear: string,
+    accessToken: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<SubmittedPeriodFigure[]> {
+    const path = this.cumulativePathForBusiness(nino, biz.businessId, biz.typeOfBusiness, taxYear);
+    if (!path) return [];
+
+    const accepts =
+      biz.typeOfBusiness === 'self-employment'
+        ? ['application/vnd.hmrc.5.0+json', 'application/vnd.hmrc.4.0+json']
+        : ['application/vnd.hmrc.6.0+json', 'application/vnd.hmrc.5.0+json'];
+
+    const data = await this.fetchHmrcOptionalJsonWithFallback<Record<string, unknown>>(
+      `${this.hmrcBaseUrl}${path}`,
+      accessToken,
+      fraudContext,
+      accepts,
+    );
+    if (!data) return [];
+
+    const { income, expenses } = this.extractIncomeExpenses(data, biz.typeOfBusiness);
+    // Skip sandbox-only payloads that sanitise down to empty figures
+    if (income === 0 && expenses === 0) return [];
+
+    return [
+      {
+        label: 'YTD cumulative',
+        periodId: `${taxYear}-cumulative`,
+        businessId: biz.businessId,
+        typeOfBusiness: biz.typeOfBusiness,
+        tradingName: biz.tradingName,
+        income,
+        expenses,
+        net: income - expenses,
+        cumulative: true,
+      },
+    ];
+  }
+
+  private async fetchLegacyPeriods(
+    nino: string,
+    biz: { businessId: string; typeOfBusiness: string; tradingName?: string },
+    taxYear: string,
+    accessToken: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<SubmittedPeriodFigure[]> {
+    if (biz.typeOfBusiness === 'self-employment') {
+      const listUrl =
+        `${this.hmrcBaseUrl}/individuals/business/self-employment/` +
+        `${encodeURIComponent(nino)}/${encodeURIComponent(biz.businessId)}/period/` +
+        `${encodeURIComponent(taxYear)}`;
+      const seAccepts = ['application/vnd.hmrc.5.0+json', 'application/vnd.hmrc.4.0+json'];
+      const list = await this.fetchHmrcOptionalJsonWithFallback<{
+        periods?: Array<{ periodId: string; periodStartDate?: string; periodEndDate?: string }>;
+      }>(listUrl, accessToken, fraudContext, seAccepts);
+
+      const periods = list?.periods ?? [];
+      const out: SubmittedPeriodFigure[] = [];
+      for (const p of periods) {
+        const detailUrl =
+          `${this.hmrcBaseUrl}/individuals/business/self-employment/` +
+          `${encodeURIComponent(nino)}/${encodeURIComponent(biz.businessId)}/period/` +
+          `${encodeURIComponent(taxYear)}/${encodeURIComponent(p.periodId)}`;
+        const detail = await this.fetchHmrcOptionalJsonWithFallback<Record<string, unknown>>(
+          detailUrl,
+          accessToken,
+          fraudContext,
+          seAccepts,
+        );
+        if (!detail) continue;
+        const { income, expenses } = this.extractIncomeExpenses(detail, 'self-employment');
+        if (income === 0 && expenses === 0) continue;
+        out.push({
+          label: p.periodId,
+          periodId: p.periodId,
+          periodStartDate: p.periodStartDate,
+          periodEndDate: p.periodEndDate,
+          businessId: biz.businessId,
+          typeOfBusiness: biz.typeOfBusiness,
+          tradingName: biz.tradingName,
+          income,
+          expenses,
+          net: income - expenses,
+        });
+      }
+      return out;
+    }
+
+    // Property (UK / foreign) — list then retrieve
+    const listUrl =
+      `${this.hmrcBaseUrl}/individuals/business/property/` +
+      `${encodeURIComponent(nino)}/${encodeURIComponent(biz.businessId)}/period/` +
+      `${encodeURIComponent(taxYear)}`;
+    const propAccepts = ['application/vnd.hmrc.6.0+json', 'application/vnd.hmrc.5.0+json'];
+    const list = await this.fetchHmrcOptionalJsonWithFallback<{
+      submissions?: Array<{
+        submissionId: string;
+        fromDate?: string;
+        toDate?: string;
+      }>;
+      periods?: Array<{
+        submissionId?: string;
+        periodId?: string;
+        fromDate?: string;
+        toDate?: string;
+        periodStartDate?: string;
+        periodEndDate?: string;
+      }>;
+    }>(listUrl, accessToken, fraudContext, propAccepts);
+
+    const entries =
+      list?.submissions ??
+      list?.periods?.map((p) => ({
+        submissionId: p.submissionId ?? p.periodId ?? '',
+        fromDate: p.fromDate ?? p.periodStartDate,
+        toDate: p.toDate ?? p.periodEndDate,
+      })) ??
+      [];
+
+    const isForeign = biz.typeOfBusiness.startsWith('foreign-property');
+    const propertySegment = isForeign ? 'foreign' : 'uk';
+    const out: SubmittedPeriodFigure[] = [];
+
+    for (const p of entries) {
+      if (!p.submissionId) continue;
+      const detailUrl =
+        `${this.hmrcBaseUrl}/individuals/business/property/${propertySegment}/` +
+        `${encodeURIComponent(nino)}/${encodeURIComponent(biz.businessId)}/period/` +
+        `${encodeURIComponent(taxYear)}/${encodeURIComponent(p.submissionId)}`;
+      const detail = await this.fetchHmrcOptionalJsonWithFallback<Record<string, unknown>>(
+        detailUrl,
+        accessToken,
+        fraudContext,
+        propAccepts,
+      );
+      if (!detail) continue;
+      const { income, expenses } = this.extractIncomeExpenses(detail, biz.typeOfBusiness);
+      if (income === 0 && expenses === 0) continue;
+      out.push({
+        label: p.submissionId,
+        periodId: p.submissionId,
+        periodStartDate: p.fromDate,
+        periodEndDate: p.toDate,
+        businessId: biz.businessId,
+        typeOfBusiness: biz.typeOfBusiness,
+        tradingName: biz.tradingName,
+        income,
+        expenses,
+        net: income - expenses,
+      });
+    }
+    return out;
+  }
+
+  private cumulativePathForBusiness(
+    nino: string,
+    businessId: string,
+    typeOfBusiness: string,
+    taxYear: string,
+  ): string | null {
+    const n = encodeURIComponent(nino);
+    const b = encodeURIComponent(businessId);
+    const t = encodeURIComponent(taxYear);
+    if (typeOfBusiness === 'self-employment') {
+      return `/individuals/business/self-employment/${n}/${b}/cumulative/${t}`;
+    }
+    if (typeOfBusiness.startsWith('uk-property') || typeOfBusiness === 'uk-property') {
+      return `/individuals/business/property/uk/${n}/${b}/cumulative/${t}`;
+    }
+    if (typeOfBusiness.startsWith('foreign-property')) {
+      return `/individuals/business/property/foreign/${n}/${b}/cumulative/${t}`;
+    }
+    return null;
+  }
+
+  private extractIncomeExpenses(
+    data: Record<string, unknown>,
+    typeOfBusiness: string,
+  ): { income: number; expenses: number } {
+    if (typeOfBusiness === 'self-employment') {
+      const periodIncome = (data.periodIncome ?? {}) as Record<string, number | undefined>;
+      const periodExpenses = (data.periodExpenses ?? {}) as Record<string, number | undefined>;
+      const income =
+        (this.sanitizeHmrcAmount(periodIncome.turnover) ?? 0) +
+        (this.sanitizeHmrcAmount(periodIncome.other) ?? 0);
+      return { income, expenses: this.sumExpenseFields(periodExpenses) };
+    }
+
+    // UK / foreign property shapes vary — try common nests
+    const uk = (data.ukProperty ?? data.ukFhlProperty ?? data.ukNonFhlProperty ?? data) as Record<
+      string,
+      unknown
+    >;
+    const incomeObj = (uk.income ?? data.income ?? {}) as Record<string, number | undefined>;
+    const expensesObj = (uk.expenses ?? data.expenses ?? {}) as Record<string, number | undefined>;
+    const income = this.sumNumericFields(incomeObj);
+    const expenses = this.sumExpenseFields(expensesObj);
+    return { income, expenses };
+  }
+
+  /** HMRC sandbox often returns ±99999999999.99 as a placeholder — treat as missing. */
+  private sanitizeHmrcAmount(value?: number | null): number | null {
+    if (value == null || Number.isNaN(value)) return null;
+    if (Math.abs(value) >= 99999999999) return null;
+    return value;
+  }
+
+  private sumExpenseFields(expenses: Record<string, number | undefined>): number {
+    const consolidated = this.sanitizeHmrcAmount(expenses.consolidatedExpenses);
+    if (consolidated != null) return consolidated;
+    return this.sumNumericFields(expenses);
+  }
+
+  private sumNumericFields(obj: Record<string, number | undefined>): number {
+    return Object.values(obj).reduce<number>((sum, v) => {
+      const n = this.sanitizeHmrcAmount(v);
+      return sum + (n ?? 0);
+    }, 0);
+  }
+
+  /** Try Accept versions in order; return null if all fail. */
+  private async fetchHmrcOptionalJsonWithFallback<T>(
+    url: string,
+    accessToken: string,
+    fraudContext: HmrcFraudRequestContext | null | undefined,
+    accepts: string[],
+  ): Promise<T | null> {
+    for (const accept of accepts) {
+      const data = await this.fetchHmrcOptionalJson<T>(url, accessToken, fraudContext, accept);
+      if (data) return data;
+    }
+    return null;
+  }
+
+  /** GET that returns null on 404 / empty — used for optional HMRC period data. */
+  private async fetchHmrcOptionalJson<T>(
+    url: string,
+    accessToken: string,
+    fraudContext: HmrcFraudRequestContext | null | undefined,
+    accept: string,
+  ): Promise<T | null> {
+    let res: Response;
+    try {
+      res = await this.hmrcApiClient.fetch(url, {
+        accessToken,
+        fraudContext,
+        headers: { Accept: accept },
+      });
+    } catch (err) {
+      this.logger.warn(`HMRC optional fetch network error: ${url}`, err);
+      return null;
+    }
+
+    if (res.status === 404) return null;
+    const text = await res.text();
+    if (!res.ok) {
+      this.logger.warn(`HMRC optional fetch ${res.status}: ${url} — ${text}`);
+      return null;
+    }
+    if (!text) return null;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return null;
+    }
   }
 
   // ── Client Notes ────────────────────────────────────────────────────────────

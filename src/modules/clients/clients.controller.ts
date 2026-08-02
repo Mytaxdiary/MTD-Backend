@@ -23,6 +23,7 @@ import type { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
+import { UpdateClientDto } from './dto/update-client.dto';
 import { ResendInvitationDto } from './dto/resend-invitation.dto';
 import { ListClientsQueryDto } from './dto/list-clients-query.dto';
 import { SendPortalMessageDto } from '../client-portal/dto/send-portal-message.dto';
@@ -88,6 +89,18 @@ export class ClientsController {
   async findOne(@Request() req: ExpressRequest, @Param('id') id: string) {
     const { tenantId } = req.user as RequestUser;
     return this.clientsService.findOne(tenantId, id);
+  }
+
+  /** Update editable client fields (e.g. UTR) */
+  @Patch(':id')
+  @ApiOperation({ summary: 'Update client fields (UTR etc.)' })
+  async update(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateClientDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.updateClient(tenantId, id, dto);
   }
 
   /** Resend HMRC invitation for an existing client */
@@ -229,6 +242,29 @@ export class ClientsController {
   ) {
     const { tenantId } = req.user as RequestUser;
     return this.clientsService.getIncomeSummary(
+      tenantId,
+      id,
+      query.taxYear,
+      this.fraudContext(req),
+    );
+  }
+
+  /**
+   * YTD (BISS) + per-quarter / cumulative period summaries
+   * from Self-Employment Business and Property Business APIs.
+   */
+  @Get(':id/submitted-figures')
+  @ApiOperation({
+    summary:
+      'Retrieve YTD + submitted period figures (BISS + Self-Employment / Property period summaries)',
+  })
+  async getSubmittedFigures(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Query() query: GetIncomeSummaryQueryDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getSubmittedFigures(
       tenantId,
       id,
       query.taxYear,

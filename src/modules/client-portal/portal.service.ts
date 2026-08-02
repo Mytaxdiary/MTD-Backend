@@ -226,6 +226,81 @@ export class PortalService {
     }
   }
 
+  async getItsaStatus(clientId: string, tenantId: string) {
+    const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
+    if (!client) throw new NotFoundException('Client not found');
+    if (!client.authorisedAt) return { message: 'HMRC authorisation pending', itsaStatuses: [] };
+
+    try {
+      const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+      const baseUrl = this.configService.get<string>('hmrc.baseUrl')!;
+      const now = new Date();
+      const taxYearStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      const taxYear = `${taxYearStart}-${String(taxYearStart + 1).slice(2)}`;
+      const url = `${baseUrl}/individuals/person/itsa-status/${encodeURIComponent(client.nino)}/${encodeURIComponent(taxYear)}?history=true`;
+
+      const res = await this.hmrcApiClient.fetch(url, {
+        accessToken,
+        headers: { Accept: 'application/vnd.hmrc.2.0+json' },
+      });
+      if (!res.ok) return { message: 'Could not load HMRC status', itsaStatuses: [] };
+      const data = (await res.json()) as { itsaStatuses?: unknown[] };
+      return { itsaStatuses: data.itsaStatuses ?? [] };
+    } catch (err) {
+      this.logger.warn(`Portal ITSA status fetch failed: ${String(err)}`);
+      return { message: 'Could not load HMRC status', itsaStatuses: [] };
+    }
+  }
+
+  async getSubmissions(clientId: string, tenantId: string) {
+    const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
+    if (!client) throw new NotFoundException('Client not found');
+    if (!client.authorisedAt)
+      return {
+        message: 'HMRC authorisation pending',
+        businesses: [],
+        totalIncome: 0,
+        totalExpenses: 0,
+        netProfit: 0,
+        netLoss: 0,
+      };
+
+    try {
+      const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+      const baseUrl = this.configService.get<string>('hmrc.baseUrl')!;
+      const now = new Date();
+      const taxYearStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      const taxYear = `${taxYearStart}-${String(taxYearStart + 1).slice(2)}`;
+      const url = `${baseUrl}/self-assessment/income-summary/${encodeURIComponent(client.nino)}/${encodeURIComponent(taxYear)}`;
+
+      const res = await this.hmrcApiClient.fetch(url, {
+        accessToken,
+        headers: { Accept: 'application/vnd.hmrc.1.0+json' },
+      });
+      if (!res.ok)
+        return {
+          message: 'No submissions yet',
+          businesses: [],
+          totalIncome: 0,
+          totalExpenses: 0,
+          netProfit: 0,
+          netLoss: 0,
+        };
+      const data = (await res.json()) as Record<string, unknown>;
+      return { taxYear, ...(data as object) };
+    } catch (err) {
+      this.logger.warn(`Portal submissions fetch failed: ${String(err)}`);
+      return {
+        message: 'Could not load submissions',
+        businesses: [],
+        totalIncome: 0,
+        totalExpenses: 0,
+        netProfit: 0,
+        netLoss: 0,
+      };
+    }
+  }
+
   async getLiabilities(clientId: string, tenantId: string) {
     const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
     if (!client) throw new NotFoundException('Client not found');

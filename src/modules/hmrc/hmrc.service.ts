@@ -272,7 +272,7 @@ export class HmrcService {
       const raw = await this.createSandboxTestUser<HmrcSandboxIndividualRaw>(
         '/create-test-user/individuals',
         accessToken,
-        { serviceNames: ['national-insurance', 'mtd-income-tax'] },
+        { serviceNames: ['national-insurance', 'self-assessment', 'mtd-income-tax'] },
       );
       individuals.push(this.normalizeSandboxIndividual(raw));
     }

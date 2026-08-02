@@ -50,6 +50,16 @@ export class Client extends BaseEntity {
   })
   phone?: string;
 
+  /** Encrypted at rest. 10-digit Self Assessment Unique Taxpayer Reference. */
+  @Column({
+    name: 'utr',
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    transformer: piiTransformer(true),
+  })
+  utr?: string;
+
   @Column({ name: 'agent_type', type: 'varchar', length: 20, default: 'main' })
   agentType: string;
 

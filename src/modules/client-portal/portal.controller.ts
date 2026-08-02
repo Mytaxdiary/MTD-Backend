@@ -47,6 +47,20 @@ export class PortalController {
     return this.portalService.getObligations(clientId, tenantId);
   }
 
+  @Get('itsa-status')
+  @ApiOperation({ summary: 'HMRC ITSA (MTD) enrolment status for this client' })
+  getItsaStatus(@Request() req: ExpressRequest) {
+    const { clientId, tenantId } = this.user(req);
+    return this.portalService.getItsaStatus(clientId, tenantId);
+  }
+
+  @Get('submissions')
+  @ApiOperation({ summary: 'YTD submitted income and expenses from HMRC for this client' })
+  getSubmissions(@Request() req: ExpressRequest) {
+    const { clientId, tenantId } = this.user(req);
+    return this.portalService.getSubmissions(clientId, tenantId);
+  }
+
   @Get('liabilities')
   @ApiOperation({ summary: 'HMRC SA balance and transactions for this client' })
   getLiabilities(@Request() req: ExpressRequest) {

@@ -13,6 +13,8 @@ export type ChaseClientDto = {
   deadline: string;
   /** positive = overdue days, negative = days remaining */
   daysOverdue: number;
+  /** positive = days since obligation period ended, negative = period still open */
+  daysSincePeriodEnd: number;
   /** quarter label e.g. "Q1 2026–27" */
   quarter: string;
   lastChase: string | null;
@@ -65,6 +67,7 @@ export class ChaseService {
         business: c.nino,
         deadline: quarter.deadlineFormatted,
         daysOverdue: quarter.daysOverdue,
+        daysSincePeriodEnd: quarter.daysSincePeriodEnd,
         quarter: quarter.label,
         lastChase: lastChaseAt
           ? lastChaseAt.toLocaleDateString('en-GB', {

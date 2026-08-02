@@ -49,4 +49,10 @@ export class CreateClientDto {
   @IsString()
   @MaxLength(1000)
   personalMessage?: string;
+
+  @ApiProperty({ required: false, example: '1234567890', description: '10-digit UTR' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{10}$/, { message: 'UTR must be exactly 10 digits' })
+  utr?: string;
 }

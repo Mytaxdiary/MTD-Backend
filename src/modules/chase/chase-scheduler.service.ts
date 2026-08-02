@@ -16,10 +16,11 @@ import { currentChaseQuarter } from './chase-template-vars.util';
 const CHASE_COOLDOWN_DAYS = 6;
 
 /**
- * How many days before the deadline we send the "upcoming" reminder.
- * e.g. 7 = send when exactly 7 days (or fewer) remain AND cooldown is clear.
+ * How many days after the obligation period ends we start auto-chasing.
+ * Day 1 = the day after the period closes (e.g. 6 Jul for Q1 ending 5 Jul).
+ * We also keep chasing until the deadline passes (daysOverdue > 0).
  */
-const UPCOMING_TRIGGER_DAYS = 7;
+const PERIOD_END_TRIGGER_DAYS = 1;
 
 @Injectable()
 export class ChaseSchedulerService {
@@ -91,9 +92,10 @@ export class ChaseSchedulerService {
       // ── Decide whether this client needs a chase today ──────────────────────
 
       const isOverdue = client.daysOverdue >= 1;
-      const isUpcoming = client.daysOverdue >= -UPCOMING_TRIGGER_DAYS && client.daysOverdue < 0;
+      // Trigger as soon as the obligation period ends (day 1 after period close)
+      const isPeriodEnded = client.daysSincePeriodEnd >= PERIOD_END_TRIGGER_DAYS;
 
-      if (!isOverdue && !isUpcoming) {
+      if (!isOverdue && !isPeriodEnded) {
         skipped++;
         continue;
       }
