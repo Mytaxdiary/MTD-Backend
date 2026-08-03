@@ -21,4 +21,12 @@ export class RefreshToken extends BaseEntity {
 
   @Column({ name: 'is_revoked', type: 'boolean', default: false })
   isRevoked: boolean;
+
+  /**
+   * Whether this session completed MFA (TOTP) at login.
+   * Preserved across access-token refresh so Gov-Client-Multi-Factor
+   * keeps being sent for the life of the session.
+   */
+  @Column({ name: 'mfa_authenticated', type: 'boolean', default: false })
+  mfaAuthenticated: boolean;
 }

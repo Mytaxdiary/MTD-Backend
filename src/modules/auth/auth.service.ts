@@ -437,7 +437,13 @@ export class AuthService {
     // Revoke used token immediately (rotation)
     await this.refreshTokenRepo.update(stored.id, { isRevoked: true });
 
-    return this.issueTokens(stored.user.id, stored.user.email, stored.user.tenantId ?? '');
+    // Preserve MFA flag from the original login session across rotation
+    return this.issueTokens(
+      stored.user.id,
+      stored.user.email,
+      stored.user.tenantId ?? '',
+      stored.mfaAuthenticated ?? false,
+    );
   }
 
   // ── Logout ───────────────────────────────────────────────────────────────
@@ -534,6 +540,7 @@ export class AuthService {
       tokenHash,
       expiresAt,
       isRevoked: false,
+      mfaAuthenticated,
     });
     await this.refreshTokenRepo.save(refreshTokenEntity);
 
