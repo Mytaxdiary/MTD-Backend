@@ -1,4 +1,4 @@
-# MTD ITSA — Backend API
+# MTD ITSA - Backend API
 
 NestJS v11 + TypeScript backend for the MTD ITSA agent platform.
 
