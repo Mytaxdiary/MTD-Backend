@@ -388,9 +388,17 @@ export class ClientsService {
     return client;
   }
 
-  async updateClient(tenantId: string, id: string, fields: { utr?: string }): Promise<Client> {
+  async updateClient(
+    tenantId: string,
+    id: string,
+    fields: { utr?: string; preferredName?: string },
+  ): Promise<Client> {
     const client = await this.findOne(tenantId, id);
     if (fields.utr !== undefined) client.utr = fields.utr || undefined;
+    if (fields.preferredName !== undefined) {
+      const trimmed = fields.preferredName.trim();
+      client.preferredName = trimmed || undefined;
+    }
     return this.clientRepo.save(client);
   }
 

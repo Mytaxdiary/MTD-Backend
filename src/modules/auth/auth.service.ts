@@ -180,7 +180,7 @@ export class AuthService {
     if (!user) throw new UnauthorizedException();
 
     const secret = authenticator.generateSecret();
-    const otpauthUrl = authenticator.keyuri(user.email, 'NewEffect MTD', secret);
+    const otpauthUrl = authenticator.keyuri(user.email, 'My Tax Diary', secret);
 
     // Encode the secret in a short-lived JWT so no DB write is needed before confirmation
     const encryptionKey = this.configService.get<string>('hmrc.encryptionKey');

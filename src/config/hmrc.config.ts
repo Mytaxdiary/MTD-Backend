@@ -17,7 +17,7 @@ export default registerAs('hmrc', () => ({
    */
   encryptionKey: process.env.HMRC_ENCRYPTION_KEY,
   /** Fraud prevention — WEB_APP_VIA_SERVER vendor headers */
-  vendorProductName: process.env.HMRC_VENDOR_PRODUCT_NAME ?? 'NewEffect MTD ITSA',
+  vendorProductName: process.env.HMRC_VENDOR_PRODUCT_NAME ?? 'My Tax Diary',
   vendorVersion: process.env.HMRC_VENDOR_VERSION ?? 'mtd-api=1.0.0&mtd-app=1.0.0',
   vendorPublicIp: process.env.HMRC_VENDOR_PUBLIC_IP,
   vendorLicenseIds: process.env.HMRC_VENDOR_LICENSE_IDS,

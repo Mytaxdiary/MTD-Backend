@@ -2,7 +2,7 @@
  * Template variable substitution for chase emails/SMS.
  *
  * Supported variables:
- *   {name}        – client's full name
+ *   {name}        – preferred name if set, otherwise first name (greeting)
  *   {business}    – client's business / trading name
  *   {quarter}     – e.g. "Q1 2026–27"
  *   {deadline}    – e.g. "7 August 2026"
@@ -18,6 +18,17 @@ export type TemplateVars = {
   firm_name: string;
 };
 
+/**
+ * Name used in chase greetings: preferred name if set, else first token of full name.
+ * e.g. preferred "Tom" → Tom;
+ */
+export function chaseGreetingName(fullName: string, preferredName?: string | null): string {
+  const preferred = preferredName?.trim();
+  if (preferred) return preferred;
+  const first = fullName.trim().split(/\s+/)[0];
+  return first || fullName.trim();
+}
+
 export function renderTemplate(template: string, vars: TemplateVars): string {
   return template
     .replace(/{name}/g, vars.name)
@@ -30,13 +41,15 @@ export function renderTemplate(template: string, vars: TemplateVars): string {
 
 // ── UK Tax Quarter helpers ────────────────────────────────────────────────────
 
-type QuarterInfo = {
+export type QuarterInfo = {
   /** e.g. "Q1 2026–27" */
   label: string;
   /** e.g. "7 August 2026" (formatted for emails) */
   deadlineFormatted: string;
   /** raw deadline Date */
   deadline: Date;
+  /** first day of the obligation period (e.g. 6 Apr for Q1) */
+  periodStartDate: Date;
   /** last day of the obligation period (e.g. 5 Jul for Q1) */
   periodEndDate: Date;
   /** positive = days overdue, negative = days remaining */
@@ -56,15 +69,35 @@ function taxYearQuarters(taxYearStart: number): QuarterInfo[] {
   const y = taxYearStart;
   const label = (q: number) => `Q${q} ${y}–${String(y + 1).slice(2)}`;
 
-  const quarters: { q: number; periodEnd: Date; deadline: Date }[] = [
-    { q: 1, periodEnd: new Date(y, 6, 5), deadline: new Date(y, 7, 7) }, // Jul 5 → Aug 7
-    { q: 2, periodEnd: new Date(y, 9, 5), deadline: new Date(y, 10, 7) }, // Oct 5 → Nov 7
-    { q: 3, periodEnd: new Date(y + 1, 0, 5), deadline: new Date(y + 1, 1, 7) }, // Jan 5 → Feb 7
-    { q: 4, periodEnd: new Date(y + 1, 3, 5), deadline: new Date(y + 1, 4, 7) }, // Apr 5 → May 7
+  const quarters: { q: number; periodStart: Date; periodEnd: Date; deadline: Date }[] = [
+    {
+      q: 1,
+      periodStart: new Date(y, 3, 6),
+      periodEnd: new Date(y, 6, 5),
+      deadline: new Date(y, 7, 7),
+    }, // 6 Apr – 5 Jul → 7 Aug
+    {
+      q: 2,
+      periodStart: new Date(y, 6, 6),
+      periodEnd: new Date(y, 9, 5),
+      deadline: new Date(y, 10, 7),
+    }, // 6 Jul – 5 Oct → 7 Nov
+    {
+      q: 3,
+      periodStart: new Date(y, 9, 6),
+      periodEnd: new Date(y + 1, 0, 5),
+      deadline: new Date(y + 1, 1, 7),
+    }, // 6 Oct – 5 Jan → 7 Feb
+    {
+      q: 4,
+      periodStart: new Date(y + 1, 0, 6),
+      periodEnd: new Date(y + 1, 3, 5),
+      deadline: new Date(y + 1, 4, 7),
+    }, // 6 Jan – 5 Apr → 7 May
   ];
 
   const now = new Date();
-  return quarters.map(({ q, periodEnd, deadline }) => ({
+  return quarters.map(({ q, periodStart, periodEnd, deadline }) => ({
     label: label(q),
     deadlineFormatted: deadline.toLocaleDateString('en-GB', {
       day: 'numeric',
@@ -72,6 +105,7 @@ function taxYearQuarters(taxYearStart: number): QuarterInfo[] {
       year: 'numeric',
     }),
     deadline,
+    periodStartDate: periodStart,
     periodEndDate: periodEnd,
     daysOverdue: Math.floor((now.getTime() - deadline.getTime()) / 86_400_000),
     daysSincePeriodEnd: Math.floor((now.getTime() - periodEnd.getTime()) / 86_400_000),

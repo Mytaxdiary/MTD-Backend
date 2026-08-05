@@ -6,7 +6,7 @@ import { Tenant } from '../tenants/entities/tenant.entity';
 import { ChaseService } from './chase.service';
 import { ChaseLogsService } from '../chase-logs/chase-logs.service';
 import { ChaseTemplatesService } from '../chase-templates/chase-templates.service';
-import { renderTemplate } from './chase-template-vars.util';
+import { chaseGreetingName, renderTemplate } from './chase-template-vars.util';
 import { currentChaseQuarter } from './chase-template-vars.util';
 
 /**
@@ -123,7 +123,7 @@ export class ChaseSchedulerService {
 
       // ── Render template variables ────────────────────────────────────────────
       const vars = {
-        name: client.name,
+        name: client.greetingName ?? chaseGreetingName(client.name, client.preferredName),
         business: client.business,
         quarter: quarter.label,
         deadline: quarter.deadlineFormatted,

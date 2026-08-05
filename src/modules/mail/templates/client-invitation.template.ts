@@ -5,7 +5,7 @@ const CARD = `width="100%" style="max-width:520px;background:#fff;border-radius:
 const BRAND = `style="margin:0 0 20px;font-size:13px;color:#6b7280;font-weight:600;letter-spacing:.04em;text-transform:uppercase"`;
 
 const DEFAULT_MESSAGE =
-  "Hi {name}, we're setting up your Making Tax Digital account. You'll receive an email from HMRC shortly — please accept the authorisation link so we can manage your quarterly updates.";
+  "Hi {name}, we're setting up your Making Tax Digital account. You'll receive an email from HMRC shortly. Please accept the authorisation link so we can manage your quarterly updates.";
 
 export interface ClientInvitationEmailData {
   to: string;
@@ -39,7 +39,7 @@ export function clientInvitationTemplate(data: ClientInvitationEmailData): strin
           <p ${BRAND}>${escapeHtml(firmName)}</p>
           <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;white-space:pre-wrap">${bodyHtml}</p>
           <p style="margin:24px 0 0;font-size:13px;color:#6b7280;line-height:1.5">
-            — ${escapeHtml(agentName)}, ${escapeHtml(firmName)}
+            - ${escapeHtml(agentName)}, ${escapeHtml(firmName)}
           </p>
         </td></tr>
       </table>
@@ -53,5 +53,5 @@ export function clientInvitationTemplate(data: ClientInvitationEmailData): strin
 export function clientInvitationPlainText(data: ClientInvitationEmailData): string {
   const bodyText =
     data.personalMessage?.trim() || DEFAULT_MESSAGE.replace(/\{name\}/g, data.clientName);
-  return `${bodyText}\n\n— ${data.agentName}, ${data.firmName}`;
+  return `${bodyText}\n\n- ${data.agentName}, ${data.firmName}`;
 }

@@ -3,11 +3,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
 import { Client } from '../clients/entities/client.entity';
 import { ChaseLogsService } from '../chase-logs/chase-logs.service';
-import { currentChaseQuarter } from './chase-template-vars.util';
+import { chaseGreetingName, currentChaseQuarter } from './chase-template-vars.util';
 
 export type ChaseClientDto = {
   id: string;
+  /** Full legal name (for list display) */
   name: string;
+  /** Preferred short name if set by agent */
+  preferredName?: string;
+  /** Greeting for templates: preferred name or first name */
+  greetingName: string;
   /** NINO — used as secondary identifier */
   business: string;
   deadline: string;
@@ -64,6 +69,8 @@ export class ChaseService {
       return {
         id: c.id,
         name: c.name,
+        preferredName: c.preferredName,
+        greetingName: chaseGreetingName(c.name, c.preferredName),
         business: c.nino,
         deadline: quarter.deadlineFormatted,
         daysOverdue: quarter.daysOverdue,

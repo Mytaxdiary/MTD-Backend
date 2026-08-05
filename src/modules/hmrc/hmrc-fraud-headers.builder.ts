@@ -61,8 +61,7 @@ export class HmrcFraudHeadersBuilder {
       'Gov-Client-Connection-Method': CONNECTION_METHOD,
     };
 
-    const productName =
-      this.configService.get<string>('hmrc.vendorProductName') ?? 'NewEffect MTD ITSA';
+    const productName = this.configService.get<string>('hmrc.vendorProductName') ?? 'My Tax Diary';
     headers['Gov-Vendor-Product-Name'] = pct(productName);
 
     const vendorVersion =

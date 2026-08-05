@@ -7,5 +7,5 @@ export default registerAs('mail', () => ({
   user: process.env.MAIL_USER,
   pass: process.env.MAIL_PASS,
   from: process.env.MAIL_FROM || 'noreply@mtditsa.co.uk',
-  fromName: process.env.MAIL_FROM_NAME || 'NewEffect MTD ITSA',
+  fromName: process.env.MAIL_FROM_NAME || 'My Tax Diary',
 }));

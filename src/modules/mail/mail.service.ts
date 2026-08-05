@@ -51,7 +51,7 @@ export class MailService {
   constructor(private readonly configService: ConfigService) {
     const host = configService.get<string>('mail.host');
     const fromEmail = configService.get<string>('mail.from') ?? 'noreply@mtditsa.co.uk';
-    const fromName = configService.get<string>('mail.fromName') ?? 'NewEffect MTD ITSA';
+    const fromName = configService.get<string>('mail.fromName') ?? 'My Tax Diary';
     const frontendUrl = configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
 
     this.from = `"${fromName}" <${fromEmail}>`;
@@ -94,9 +94,9 @@ export class MailService {
   async sendWelcomeEmail(to: string, firstName: string): Promise<void> {
     await this.send(
       to,
-      'Welcome to NewEffect MTD ITSA',
+      'Welcome to My Tax Diary',
       welcomeTemplate(firstName, this.loginUrl),
-      `Hi ${firstName},\n\nYour NewEffect MTD ITSA account is ready. Sign in at:\n${this.loginUrl}\n\nThe NewEffect team`,
+      `Hi ${firstName},\n\nYour My Tax Diary account is ready. Sign in at:\n${this.loginUrl}\n\nThe My Tax Diary team`,
     );
   }
 
@@ -123,7 +123,7 @@ ${body
   async sendClientInvitationEmail(data: ClientInvitationEmailData): Promise<void> {
     await this.send(
       data.to,
-      `${data.firmName} — Making Tax Digital setup`,
+      `${data.firmName}: Making Tax Digital setup`,
       clientInvitationTemplate(data),
       clientInvitationPlainText(data),
     );
@@ -132,7 +132,7 @@ ${body
   async sendPortalInvite(to: string, data: PortalInviteEmailData): Promise<void> {
     await this.send(
       to,
-      `${data.firmName} — set up your client portal`,
+      `${data.firmName}: set up your client portal`,
       portalInviteTemplate(data),
       portalInvitePlainText(data),
     );

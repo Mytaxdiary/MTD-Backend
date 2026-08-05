@@ -14,7 +14,7 @@ export function passwordResetTemplate(resetUrl: string): string {
     <tr><td align="center">
       <table ${CARD}>
         <tr><td>
-          <p ${BRAND}>NewEffect MTD ITSA</p>
+          <p ${BRAND}>My Tax Diary</p>
           <h1 style="margin:0 0 20px;font-size:22px;color:#111827;font-weight:700">Reset your password</h1>
           <p style="margin:0 0 24px;font-size:14px;color:#374151;line-height:1.6">
             We received a request to reset your password. Click the button below to choose a new one.

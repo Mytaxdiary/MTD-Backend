@@ -1,19 +1,23 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Client } from '../clients/entities/client.entity';
+import { ClientsService } from '../clients/clients.service';
 import { ChaseLogsService } from '../chase-logs/chase-logs.service';
-import { currentChaseQuarter } from '../chase/chase-template-vars.util';
+import { currentChaseQuarter, type QuarterInfo } from '../chase/chase-template-vars.util';
+import { derivePipelineStatus, type PipelineStatus } from './pipeline-status';
 
 export type DashboardClientRow = {
   id: string;
   name: string;
   invitationStatus: string;
   authorisedAt: string | null;
-  /** overdue | due-soon | authorized | pending-invite */
-  status: string;
-  /** not-started | chased | received */
-  stage: string;
+  /** Canonical pipeline status for list / kanban / year */
+  pipelineStatus: PipelineStatus;
+  /** @deprecated use pipelineStatus — kept briefly for older clients */
+  status: PipelineStatus;
+  /** @deprecated use pipelineStatus */
+  stage: PipelineStatus;
   /** e.g. "Q4" */
   quarter: string;
   /** e.g. "7 May 2026" */
@@ -22,9 +26,8 @@ export type DashboardClientRow = {
   daysLeft: number;
   chase: string;
   chaseCount: number;
-  /** always false — no backend model for internal "records received" state */
+  /** Phase 2 manual flag — always false in Phase 1 */
   records: boolean;
-  /** always [] — requires separate HMRC businesses API call per client */
   type: string[];
   q1: string;
   q2: string;
@@ -39,25 +42,36 @@ export type DashboardSummary = {
   metrics: {
     total: number;
     pendingInvites: number;
-    overdue: number;
-    dueSoon: number;
+    notStarted: number;
+    chased: number;
+    recordsReceived: number;
+    readyForReview: number;
+    submitted: number;
   };
   clients: DashboardClientRow[];
 };
 
-function formatChaseText(lastChaseAt: Date | null, lastStatus: string): string {
+function formatChaseText(lastChaseAt: Date | null, lastStatus: string | null): string {
   if (!lastChaseAt) return 'Not chased';
   const daysAgo = Math.floor((Date.now() - lastChaseAt.getTime()) / 86_400_000);
-  if (lastStatus === 'responded') return 'Records received';
+  if (lastStatus === 'responded') return 'Client responded';
   if (lastStatus === 'bounced') return 'Bounced';
   const ago = daysAgo === 0 ? 'today' : `${daysAgo}d ago`;
   if (lastStatus === 'opened') return `Chased ${ago} (opened)`;
   return `Chased ${ago}`;
 }
 
+function ymd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function deriveQDots(
   isAuthorised: boolean,
   currentQNum: number,
+  pipelineStatus: PipelineStatus,
   daysOverdue: number,
 ): { q1: string; q2: string; q3: string; q4: string } {
   if (!isAuthorised) {
@@ -69,16 +83,49 @@ function deriveQDots(
     q3: 'pending',
     q4: 'pending',
   };
-  if (daysOverdue > 0) dots[`q${currentQNum}`] = 'overdue';
+  const key = `q${currentQNum}`;
+  if (pipelineStatus === 'submitted') dots[key] = 'filed';
+  else if (daysOverdue > 0) dots[key] = 'overdue';
+  else if (
+    pipelineStatus === 'chased' ||
+    pipelineStatus === 'records-received' ||
+    pipelineStatus === 'ready-for-review'
+  ) {
+    dots[key] = 'ready';
+  }
   return dots as { q1: string; q2: string; q3: string; q4: string };
+}
+
+/** Run async tasks with a fixed concurrency limit. */
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
 }
 
 @Injectable()
 export class DashboardService {
+  private readonly logger = new Logger(DashboardService.name);
+
   constructor(
     @InjectRepository(Client)
     private readonly clientRepo: Repository<Client>,
     private readonly chaseLogsService: ChaseLogsService,
+    private readonly clientsService: ClientsService,
   ) {}
 
   async getSummary(tenantId: string): Promise<DashboardSummary> {
@@ -88,7 +135,7 @@ export class DashboardService {
     });
 
     const quarter = currentChaseQuarter();
-    const currentQNum = parseInt(quarter.label.charAt(1)); // "Q4 2025–26" → 4
+    const currentQNum = parseInt(quarter.label.charAt(1), 10); // "Q4 2025–26" → 4
     const daysOverdue = quarter.daysOverdue;
 
     const now = new Date();
@@ -98,39 +145,39 @@ export class DashboardService {
     const clientIds = clients.map((c) => c.id);
     const summaryMap =
       clientIds.length > 0
-        ? await this.chaseLogsService.summaryForClients(tenantId, clientIds)
-        : new Map<string, { lastChaseAt: Date; lastStatus: string; chaseCount: number }>();
+        ? await this.chaseLogsService.summaryForClients(
+            tenantId,
+            clientIds,
+            quarter.periodStartDate,
+          )
+        : new Map();
+
+    const authorised = clients.filter((c) => !!c.authorisedAt);
+    const submittedIds = await this.findSubmittedClientIds(tenantId, authorised, quarter);
 
     const rows: DashboardClientRow[] = clients.map((c) => {
       const isAuthorised = !!c.authorisedAt;
       const summary = summaryMap.get(c.id);
       const lastChaseAt: Date | null = summary?.lastChaseAt ?? null;
-      const lastStatus = summary?.lastStatus ?? '';
+      const lastStatus = summary?.lastStatus ?? null;
       const chaseCount = summary?.chaseCount ?? 0;
+      const chasedThisQuarter = chaseCount > 0;
+      const submitted = submittedIds.has(c.id);
 
-      let status: string;
-      if (!isAuthorised) {
-        status = 'pending-invite';
-      } else if (daysOverdue > 0) {
-        status = 'overdue';
-      } else if (daysOverdue >= -30) {
-        status = 'due-soon';
-      } else {
-        status = 'authorized';
-      }
-
-      let stage = 'not-started';
-      if (isAuthorised && lastChaseAt) {
-        stage = lastStatus === 'responded' ? 'received' : 'chased';
-      }
+      const pipelineStatus = derivePipelineStatus({
+        isAuthorised,
+        submitted,
+        chasedThisQuarter,
+      });
 
       return {
         id: c.id,
         name: c.name,
         invitationStatus: c.invitationStatus,
         authorisedAt: c.authorisedAt?.toISOString() ?? null,
-        status,
-        stage,
+        pipelineStatus,
+        status: pipelineStatus,
+        stage: pipelineStatus,
         quarter: `Q${currentQNum}`,
         deadline: isAuthorised ? quarter.deadlineFormatted : 'N/A',
         daysLeft: isAuthorised ? -daysOverdue : 0,
@@ -138,9 +185,11 @@ export class DashboardService {
         chaseCount,
         records: false,
         type: [],
-        ...deriveQDots(isAuthorised, currentQNum, daysOverdue),
+        ...deriveQDots(isAuthorised, currentQNum, pipelineStatus, daysOverdue),
       };
     });
+
+    const count = (s: PipelineStatus) => rows.filter((r) => r.pipelineStatus === s).length;
 
     return {
       currentTaxYear,
@@ -148,11 +197,51 @@ export class DashboardService {
       currentDeadline: quarter.deadlineFormatted,
       metrics: {
         total: rows.length,
-        pendingInvites: rows.filter((r) => r.status === 'pending-invite').length,
-        overdue: rows.filter((r) => r.status === 'overdue').length,
-        dueSoon: rows.filter((r) => r.status === 'due-soon').length,
+        pendingInvites: count('pending-invite'),
+        notStarted: count('not-started'),
+        chased: count('chased'),
+        recordsReceived: count('records-received'),
+        readyForReview: count('ready-for-review'),
+        submitted: count('submitted'),
       },
       clients: rows,
     };
+  }
+
+  /**
+   * Best-effort: mark clients whose current-quarter I&E obligation is fulfilled on HMRC.
+   * Failures are ignored so the dashboard still loads from auth + chase data.
+   */
+  private async findSubmittedClientIds(
+    tenantId: string,
+    authorised: Client[],
+    quarter: QuarterInfo,
+  ): Promise<Set<string>> {
+    const submitted = new Set<string>();
+    if (authorised.length === 0) return submitted;
+
+    const fromDate = ymd(quarter.periodStartDate);
+    const toDate = ymd(quarter.periodEndDate);
+    const periodEndYmd = ymd(quarter.periodEndDate);
+
+    await mapPool(authorised, 3, async (client) => {
+      try {
+        const res = await this.clientsService.getIncomeAndExpenditureObligations(
+          tenantId,
+          client.id,
+          { fromDate, toDate },
+          null,
+        );
+        const details = (res.obligations ?? []).flatMap((o) => o.obligationDetails ?? []);
+        const match = details.find(
+          (d) => d.periodEndDate === periodEndYmd && (d.status === 'fulfilled' || !!d.receivedDate),
+        );
+        if (match) submitted.add(client.id);
+      } catch (err) {
+        this.logger.debug(`Dashboard submitted check skipped for ${client.id}: ${String(err)}`);
+      }
+    });
+
+    return submitted;
   }
 }

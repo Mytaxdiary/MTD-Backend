@@ -14,10 +14,10 @@ export function welcomeTemplate(firstName: string, loginUrl: string): string {
     <tr><td align="center">
       <table ${CARD}>
         <tr><td>
-          <p ${BRAND}>NewEffect MTD ITSA</p>
+          <p ${BRAND}>My Tax Diary</p>
           <h1 style="margin:0 0 20px;font-size:22px;color:#111827;font-weight:700">Welcome, ${firstName}!</h1>
           <p style="margin:0 0 24px;font-size:14px;color:#374151;line-height:1.6">
-            Your NewEffect MTD ITSA agent account is ready. Sign in to start managing your clients and quarterly submissions.
+            Your My Tax Diary agent account is ready. Sign in to start managing your clients and quarterly submissions.
           </p>
           <a href="${loginUrl}" ${BTN}>Sign in</a>
         </td></tr>

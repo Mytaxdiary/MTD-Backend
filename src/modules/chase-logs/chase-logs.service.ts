@@ -97,9 +97,13 @@ export class ChaseLogsService {
    * Returns a summary map of clientId → { lastChaseAt, chaseCount, lastStatus }
    * for a given list of client IDs. Used by the chase/clients endpoint.
    */
+  /**
+   * @param since When set, only counts chases with sentAt >= since (e.g. current quarter start).
+   */
   async summaryForClients(
     tenantId: string,
     clientIds: string[],
+    since?: Date,
   ): Promise<Map<string, ChaseLogSummary>> {
     if (clientIds.length === 0) return new Map();
 
@@ -110,7 +114,11 @@ export class ChaseLogsService {
 
     const map = new Map<string, ChaseLogSummary>();
     for (const cid of clientIds) {
-      const clientLogs = logs.filter((l) => l.clientId === cid);
+      const clientLogs = logs.filter((l) => {
+        if (l.clientId !== cid) return false;
+        if (!since) return true;
+        return l.sentAt.getTime() >= since.getTime();
+      });
       map.set(cid, {
         clientId: cid,
         lastChaseAt: clientLogs[0]?.sentAt ?? null,

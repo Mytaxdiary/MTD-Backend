@@ -21,6 +21,19 @@ export class Client extends BaseEntity {
   @Column({ name: 'name', type: 'varchar', length: 500, transformer: piiTransformer() })
   name: string;
 
+  /**
+   * Optional short name for chase greetings (e.g. "Tom" for Thomas).
+   * Encrypted at rest. When unset, chase templates use the first name.
+   */
+  @Column({
+    name: 'preferred_name',
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    transformer: piiTransformer(true),
+  })
+  preferredName?: string;
+
   /** Encrypted at rest. Use ninoHash for DB queries / unique checks. */
   @Column({ name: 'nino', type: 'varchar', length: 500, transformer: piiTransformer() })
   nino: string;
