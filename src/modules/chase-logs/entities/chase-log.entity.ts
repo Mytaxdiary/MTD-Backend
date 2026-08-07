@@ -34,4 +34,16 @@ export class ChaseLog extends TenantAwareBaseEntity {
 
   @Column({ name: 'sent_at', type: 'datetime' })
   sentAt: Date;
+
+  /** Agent who triggered the chase (for mailbox audit). */
+  @Column({ name: 'sent_by_user_id', type: 'varchar', length: 36, nullable: true })
+  sentByUserId?: string;
+
+  /** Actual From address used for delivery. */
+  @Column({ name: 'from_email', type: 'varchar', length: 255, nullable: true })
+  fromEmail?: string;
+
+  /** agent = connected mailbox; system = MAIL_FROM SMTP fallback. */
+  @Column({ name: 'send_via', type: 'varchar', length: 16, nullable: true })
+  sendVia?: string;
 }

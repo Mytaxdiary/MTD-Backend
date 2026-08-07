@@ -97,6 +97,19 @@ export class Client extends BaseEntity {
   authorisedAt?: Date;
 
   /**
+   * Current MTD pipeline status for this client (dashboard + client history).
+   * Auto: pending-invite → not-started → chased → submitted.
+   * Manual: records-received → ready-for-review (agent).
+   */
+  @Column({
+    name: 'pipeline_status',
+    type: 'varchar',
+    length: 32,
+    default: 'pending-invite',
+  })
+  pipelineStatus: string;
+
+  /**
    * How this client's bookkeeping is handled.
    * 'bookkeeping' = client uses Xero/QBO themselves (we chase to confirm completion).
    * 'data-request' = client sends raw data to us (we chase for bank statements/receipts).

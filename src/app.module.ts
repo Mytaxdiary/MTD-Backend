@@ -23,14 +23,16 @@ import { AppNotificationsModule } from './modules/app-notifications/app-notifica
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ClientPortalModule } from './modules/client-portal/client-portal.module';
 import { AccountModule } from './modules/account/account.module';
+import { EmailConnectionsModule } from './modules/email-connections/email-connections.module';
 import hmrcConfig from './config/hmrc.config';
+import emailConfig from './config/email.config';
 
 @Module({
   imports: [
     // Global config — load all namespaces and validate env on startup
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, authConfig, mailConfig, hmrcConfig],
+      load: [appConfig, databaseConfig, authConfig, mailConfig, hmrcConfig, emailConfig],
       validationSchema: envValidationSchema,
       validationOptions: {
         allowUnknown: true,
@@ -71,6 +73,7 @@ import hmrcConfig from './config/hmrc.config';
     AuthModule,
     TenantsModule,
     HmrcModule,
+    EmailConnectionsModule,
     ClientsModule,
     ChaseTemplatesModule,
     ChaseLogsModule,

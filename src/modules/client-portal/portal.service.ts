@@ -91,6 +91,7 @@ export class PortalService {
     clientId: string,
     clientEmail: string,
     clientName: string,
+    actingUserId?: string,
   ): Promise<void> {
     // Upsert — avoid duplicate if already exists (e.g. re-invite)
     let cu = await this.clientUserRepo.findOne({ where: { clientId } });
@@ -124,12 +125,16 @@ export class PortalService {
 
     const setupUrl = `${frontendUrl}/portal/setup?token=${setupToken}`;
     try {
-      await this.mailService.sendPortalInvite(clientEmail, {
-        clientName,
-        firmName,
-        setupUrl,
-        expiryDays: SETUP_TOKEN_EXPIRY_DAYS,
-      });
+      await this.mailService.sendPortalInvite(
+        clientEmail,
+        {
+          clientName,
+          firmName,
+          setupUrl,
+          expiryDays: SETUP_TOKEN_EXPIRY_DAYS,
+        },
+        actingUserId,
+      );
     } catch (err) {
       this.logger.warn(`Portal invite email failed for client ${clientId}: ${String(err)}`);
     }
@@ -353,6 +358,7 @@ export class PortalService {
     tenantId: string,
     clientId: string,
     dto: SendPortalMessageDto,
+    actingUserId?: string,
   ): Promise<PortalMessage> {
     const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
     if (!client) throw new NotFoundException('Client not found');
@@ -372,13 +378,17 @@ export class PortalService {
     const frontendUrl =
       this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
     try {
-      await this.mailService.sendPortalMessage(client.email, {
-        clientName: client.name,
-        firmName,
-        subject: dto.subject,
-        body: dto.body,
-        portalUrl: `${frontendUrl}/portal/messages`,
-      });
+      await this.mailService.sendPortalMessage(
+        client.email,
+        {
+          clientName: client.name,
+          firmName,
+          subject: dto.subject,
+          body: dto.body,
+          portalUrl: `${frontendUrl}/portal/messages`,
+        },
+        actingUserId,
+      );
     } catch (err) {
       this.logger.warn(`Portal message email failed for client ${clientId}: ${String(err)}`);
     }

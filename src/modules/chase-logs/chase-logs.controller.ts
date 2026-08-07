@@ -16,6 +16,7 @@ import { ChaseLogsService } from './chase-logs.service';
 import { CreateChaseLogDto } from './dto/create-chase-log.dto';
 
 interface RequestUser {
+  userId: string;
   tenantId: string;
 }
 
@@ -30,10 +31,14 @@ export class ChaseLogsController {
     return (req.user as RequestUser).tenantId;
   }
 
+  private uid(req: ExpressRequest): string {
+    return (req.user as RequestUser).userId;
+  }
+
   @Post()
   @ApiOperation({ summary: 'Record a chase sent to a client' })
   create(@Request() req: ExpressRequest, @Body() dto: CreateChaseLogDto) {
-    return this.service.create(this.tid(req), dto);
+    return this.service.create(this.tid(req), dto, this.uid(req));
   }
 
   @Get()

@@ -61,6 +61,7 @@ import { piiHash } from '../../common/utils/pii-hash.util';
 import { AppNotificationsService } from '../app-notifications/app-notifications.service';
 import { PortalService } from '../client-portal/portal.service';
 import { NotificationPreferences } from '../tenants/entities/notification-preferences.entity';
+import { ClientPipelineService } from './client-pipeline.service';
 
 /** HMRC POST /relationships result. */
 type HmrcRelationshipResult = 'active' | 'inactive';
@@ -104,6 +105,7 @@ export class ClientsService {
     private readonly mailService: MailService,
     private readonly appNotificationsService: AppNotificationsService,
     private readonly portalService: PortalService,
+    private readonly clientPipelineService: ClientPipelineService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -117,6 +119,7 @@ export class ClientsService {
     agentEmail: string,
     dto: CreateClientDto,
     fraudContext?: HmrcFraudRequestContext | null,
+    actingUserId?: string,
   ): Promise<CreateClientResult> {
     // 1. Check HMRC connection and ARN
     const connection = await this.hmrcService.getStatus(tenantId);
@@ -162,6 +165,7 @@ export class ClientsService {
       agentType: dto.agentType ?? 'main',
       utr: dto.utr ?? undefined,
       invitationStatus: 'pending',
+      pipelineStatus: 'pending-invite',
     });
 
     try {
@@ -175,9 +179,13 @@ export class ClientsService {
       throw err;
     }
 
+    await this.clientPipelineService.recordInitialStatus(tenantId, client.id).catch((err) => {
+      this.logger.warn(`Initial pipeline history failed for ${client.id}: ${String(err)}`);
+    });
+
     // Create portal account + send invite email (fire-and-forget — never blocks client creation)
     void this.portalService
-      .createAndInvite(tenantId, client.id, dto.email, dto.name)
+      .createAndInvite(tenantId, client.id, dto.email, dto.name, actingUserId)
       .catch((err) =>
         this.logger.warn(`Portal invite failed for client ${client.id}: ${String(err)}`),
       );
@@ -190,6 +198,7 @@ export class ClientsService {
       firmName,
       personalMessage: dto.personalMessage,
       fraudContext,
+      actingUserId,
     });
   }
 
@@ -200,6 +209,7 @@ export class ClientsService {
     agentEmail: string,
     personalMessage?: string,
     fraudContext?: HmrcFraudRequestContext | null,
+    actingUserId?: string,
   ): Promise<CreateClientResult> {
     const client = await this.findOne(tenantId, clientId);
 
@@ -244,6 +254,7 @@ export class ClientsService {
       firmName,
       personalMessage,
       fraudContext,
+      actingUserId,
     });
   }
 
@@ -1014,6 +1025,13 @@ export class ClientsService {
           client.authorisedAt = new Date();
           await this.clientRepo.save(client);
           this.logger.log(`HMRC relationship active for client ${client.id}`);
+          await this.clientPipelineService
+            .markNotStarted(client.tenantId, client.id)
+            .catch((err) => {
+              this.logger.warn(
+                `Pipeline not-started transition failed for ${client.id}: ${String(err)}`,
+              );
+            });
         }
         return true;
       }
@@ -1091,8 +1109,18 @@ export class ClientsService {
     firmName: string;
     personalMessage?: string;
     fraudContext?: HmrcFraudRequestContext | null;
+    actingUserId?: string;
   }): Promise<CreateClientResult> {
-    const { client, arn, accessToken, agentName, firmName, personalMessage, fraudContext } = params;
+    const {
+      client,
+      arn,
+      accessToken,
+      agentName,
+      firmName,
+      personalMessage,
+      fraudContext,
+      actingUserId,
+    } = params;
 
     try {
       const invitationId = await this.createHmrcInvitation({
@@ -1117,13 +1145,16 @@ export class ClientsService {
 
       const personalMsg = personalMessage?.replace(/\{name\}/g, client.name) ?? '';
       this.mailService
-        .sendClientInvitationEmail({
-          to: client.email,
-          clientName: client.name,
-          agentName,
-          firmName,
-          personalMessage: personalMsg,
-        })
+        .sendClientInvitationEmail(
+          {
+            to: client.email,
+            clientName: client.name,
+            agentName,
+            firmName,
+            personalMessage: personalMsg,
+          },
+          actingUserId,
+        )
         .catch((err) => this.logger.error(`Notification email failed for ${client.email}`, err));
 
       return { client, invitationSent: true };
@@ -1240,6 +1271,7 @@ export class ClientsService {
 
     // 4. Create all clients in a single transaction (no HMRC calls — invitations sent separately)
     let created = 0;
+    const createdIds: string[] = [];
 
     await this.dataSource.transaction(async (manager) => {
       for (const row of rows) {
@@ -1254,11 +1286,19 @@ export class ClientsService {
           phone: row.phone?.trim() || undefined,
           agentType: row.agent_type?.trim().toLowerCase() === 'supporting' ? 'supporting' : 'main',
           invitationStatus: 'pending',
+          pipelineStatus: 'pending-invite',
         });
-        await manager.save(Client, client);
+        const saved = await manager.save(Client, client);
+        createdIds.push(saved.id);
         created++;
       }
     });
+
+    for (const clientId of createdIds) {
+      await this.clientPipelineService.recordInitialStatus(tenantId, clientId).catch((err) => {
+        this.logger.warn(`Initial pipeline history failed for ${clientId}: ${String(err)}`);
+      });
+    }
 
     return {
       valid: true,

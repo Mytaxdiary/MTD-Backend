@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
@@ -40,20 +40,32 @@ import {
   deletionCancelledPlainText,
   type DeletionCancelledEmailData,
 } from './templates/deletion-cancelled.template';
+import { EmailConnectionsService } from '../email-connections/email-connections.service';
+
+export type ClientMailSendMeta = {
+  /** agent = connected mailbox; system = MAIL_FROM SMTP */
+  via: 'agent' | 'system';
+  fromEmail: string;
+};
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: Transporter | null = null;
   private readonly from: string;
+  private readonly fromEmail: string;
   private readonly loginUrl: string;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    @Optional() private readonly emailConnectionsService?: EmailConnectionsService,
+  ) {
     const host = configService.get<string>('mail.host');
     const fromEmail = configService.get<string>('mail.from') ?? 'noreply@mtditsa.co.uk';
     const fromName = configService.get<string>('mail.fromName') ?? 'My Tax Diary';
     const frontendUrl = configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
 
+    this.fromEmail = fromEmail;
     this.from = `"${fromName}" <${fromEmail}>`;
     this.loginUrl = `${frontendUrl}/login`;
 
@@ -100,15 +112,19 @@ export class MailService {
     );
   }
 
-  async sendChaseEmail(to: string, subject: string, body: string): Promise<void> {
-    // body is plain text (templates use \n line breaks); convert to basic HTML
+  async sendChaseEmail(
+    to: string,
+    subject: string,
+    body: string,
+    actingUserId?: string,
+  ): Promise<ClientMailSendMeta> {
     const html = `<div style="font-family:sans-serif;font-size:14px;line-height:1.6;color:#1E293B">
 ${body
   .split('\n')
   .map((l) => (l.trim() === '' ? '<br>' : `<p style="margin:0 0 8px">${l}</p>`))
   .join('\n')}
 </div>`;
-    await this.send(to, subject, html, body);
+    return this.sendClientFacing(to, subject, html, body, actingUserId);
   }
 
   async sendInvitationAcceptedEmail(data: InvitationAcceptedEmailData): Promise<void> {
@@ -120,30 +136,44 @@ ${body
     );
   }
 
-  async sendClientInvitationEmail(data: ClientInvitationEmailData): Promise<void> {
-    await this.send(
+  async sendClientInvitationEmail(
+    data: ClientInvitationEmailData,
+    actingUserId?: string,
+  ): Promise<ClientMailSendMeta> {
+    return this.sendClientFacing(
       data.to,
       `${data.firmName}: Making Tax Digital setup`,
       clientInvitationTemplate(data),
       clientInvitationPlainText(data),
+      actingUserId,
     );
   }
 
-  async sendPortalInvite(to: string, data: PortalInviteEmailData): Promise<void> {
-    await this.send(
+  async sendPortalInvite(
+    to: string,
+    data: PortalInviteEmailData,
+    actingUserId?: string,
+  ): Promise<ClientMailSendMeta> {
+    return this.sendClientFacing(
       to,
       `${data.firmName}: set up your client portal`,
       portalInviteTemplate(data),
       portalInvitePlainText(data),
+      actingUserId,
     );
   }
 
-  async sendPortalMessage(to: string, data: PortalMessageEmailData): Promise<void> {
-    await this.send(
+  async sendPortalMessage(
+    to: string,
+    data: PortalMessageEmailData,
+    actingUserId?: string,
+  ): Promise<ClientMailSendMeta> {
+    return this.sendClientFacing(
       to,
       `[${data.firmName}] ${data.subject}`,
       portalMessageTemplate(data),
       portalMessagePlainText(data),
+      actingUserId,
     );
   }
 
@@ -175,6 +205,36 @@ ${body
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────
+
+  /**
+   * Client-facing path: try agent mailbox first, then system SMTP.
+   */
+  private async sendClientFacing(
+    to: string,
+    subject: string,
+    html: string,
+    text: string,
+    actingUserId?: string,
+  ): Promise<ClientMailSendMeta> {
+    if (actingUserId && this.emailConnectionsService) {
+      const agent = await this.emailConnectionsService.sendAsAgent({
+        userId: actingUserId,
+        to,
+        subject,
+        html,
+        text,
+      });
+      if (agent) {
+        this.logger.log(
+          `Email sent via agent mailbox → ${to} (${subject}) from ${agent.fromEmail}`,
+        );
+        return { via: 'agent', fromEmail: agent.fromEmail };
+      }
+    }
+
+    await this.send(to, subject, html, text);
+    return { via: 'system', fromEmail: this.fromEmail };
+  }
 
   private async send(to: string, subject: string, html: string, text: string): Promise<void> {
     if (!this.transporter) {

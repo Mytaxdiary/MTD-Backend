@@ -42,6 +42,18 @@ export const envValidationSchema = Joi.object({
   // 64-char hex = 32-byte AES key. Required in production, optional in sandbox/dev.
   HMRC_ENCRYPTION_KEY: Joi.string().length(64).optional(),
 
+  // Agent mailbox OAuth (optional — falls back to system SMTP when unset / not connected)
+  EMAIL_ENCRYPTION_KEY: Joi.string().length(64).optional(),
+  GOOGLE_CLIENT_ID: Joi.string().optional(),
+  GOOGLE_CLIENT_SECRET: Joi.string().optional(),
+  GOOGLE_REDIRECT_URI: Joi.string().uri().optional(),
+  GOOGLE_EMAIL_SCOPE: Joi.string().optional(),
+  MICROSOFT_CLIENT_ID: Joi.string().optional(),
+  MICROSOFT_CLIENT_SECRET: Joi.string().optional(),
+  MICROSOFT_REDIRECT_URI: Joi.string().uri().optional(),
+  MICROSOFT_TENANT: Joi.string().optional(),
+  MICROSOFT_EMAIL_SCOPE: Joi.string().optional(),
+
   // Auth — JWT (required: auth module is now active)
   JWT_SECRET: Joi.string().min(16).required(),
   JWT_EXPIRES_IN: Joi.string().default('15m'),

@@ -3,9 +3,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Client } from '../clients/entities/client.entity';
 import { ClientsService } from '../clients/clients.service';
+import { ClientPipelineService } from '../clients/client-pipeline.service';
 import { ChaseLogsService } from '../chase-logs/chase-logs.service';
 import { currentChaseQuarter, type QuarterInfo } from '../chase/chase-template-vars.util';
-import { derivePipelineStatus, type PipelineStatus } from './pipeline-status';
+import {
+  derivePipelineStatus,
+  resolvePipelineStatus,
+  type PipelineStatus,
+} from './pipeline-status';
 
 export type DashboardClientRow = {
   id: string;
@@ -26,7 +31,7 @@ export type DashboardClientRow = {
   daysLeft: number;
   chase: string;
   chaseCount: number;
-  /** Phase 2 manual flag — always false in Phase 1 */
+  /** True when pipeline is records-received or later (except pending/not-started). */
   records: boolean;
   type: string[];
   q1: string;
@@ -126,6 +131,7 @@ export class DashboardService {
     private readonly clientRepo: Repository<Client>,
     private readonly chaseLogsService: ChaseLogsService,
     private readonly clientsService: ClientsService,
+    private readonly clientPipelineService: ClientPipelineService,
   ) {}
 
   async getSummary(tenantId: string): Promise<DashboardSummary> {
@@ -155,6 +161,16 @@ export class DashboardService {
     const authorised = clients.filter((c) => !!c.authorisedAt);
     const submittedIds = await this.findSubmittedClientIds(tenantId, authorised, quarter);
 
+    if (submittedIds.size > 0) {
+      await this.clientPipelineService.markSubmittedMany(tenantId, [...submittedIds]);
+      // Reload so persisted submitted status is reflected in resolvePipelineStatus.
+      const refreshed = await this.clientRepo.find({
+        where: { tenantId },
+        order: { createdAt: 'ASC' },
+      });
+      clients.splice(0, clients.length, ...refreshed);
+    }
+
     const rows: DashboardClientRow[] = clients.map((c) => {
       const isAuthorised = !!c.authorisedAt;
       const summary = summaryMap.get(c.id);
@@ -164,11 +180,12 @@ export class DashboardService {
       const chasedThisQuarter = chaseCount > 0;
       const submitted = submittedIds.has(c.id);
 
-      const pipelineStatus = derivePipelineStatus({
+      const derived = derivePipelineStatus({
         isAuthorised,
         submitted,
         chasedThisQuarter,
       });
+      const pipelineStatus = resolvePipelineStatus(c.pipelineStatus, derived);
 
       return {
         id: c.id,
@@ -183,7 +200,10 @@ export class DashboardService {
         daysLeft: isAuthorised ? -daysOverdue : 0,
         chase: formatChaseText(lastChaseAt, lastStatus),
         chaseCount,
-        records: false,
+        records:
+          pipelineStatus === 'records-received' ||
+          pipelineStatus === 'ready-for-review' ||
+          pipelineStatus === 'submitted',
         type: [],
         ...deriveQDots(isAuthorised, currentQNum, pipelineStatus, daysOverdue),
       };

@@ -22,8 +22,10 @@ import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagg
 import type { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ClientsService } from './clients.service';
+import { ClientPipelineService } from './client-pipeline.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
+import { UpdatePipelineStatusDto } from './dto/update-pipeline-status.dto';
 import { ResendInvitationDto } from './dto/resend-invitation.dto';
 import { ListClientsQueryDto } from './dto/list-clients-query.dto';
 import { SendPortalMessageDto } from '../client-portal/dto/send-portal-message.dto';
@@ -51,6 +53,7 @@ interface RequestUser {
 export class ClientsController {
   constructor(
     private readonly clientsService: ClientsService,
+    private readonly clientPipelineService: ClientPipelineService,
     private readonly portalService: PortalService,
   ) {}
 
@@ -63,8 +66,8 @@ export class ClientsController {
   @Post()
   @ApiOperation({ summary: 'Add a client and send HMRC authorisation invitation' })
   async create(@Request() req: ExpressRequest, @Body() dto: CreateClientDto) {
-    const { tenantId, email } = req.user as RequestUser;
-    return this.clientsService.create(tenantId, email, dto, this.fraudContext(req));
+    const { tenantId, email, userId } = req.user as RequestUser;
+    return this.clientsService.create(tenantId, email, dto, this.fraudContext(req), userId);
   }
 
   /** List clients for this firm — paginated, server-side status filter */
@@ -103,6 +106,29 @@ export class ClientsController {
     return this.clientsService.updateClient(tenantId, id, dto);
   }
 
+  /** Client pipeline status audit history */
+  @Get(':id/status-history')
+  @ApiOperation({ summary: 'Get client pipeline status history (audit)' })
+  async getStatusHistory(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientPipelineService.getStatusHistory(tenantId, id);
+  }
+
+  /** Agent manual pipeline transition (records-received / ready-for-review) */
+  @Patch(':id/pipeline-status')
+  @ApiOperation({
+    summary:
+      'Advance client pipeline status manually (one step: records-received or ready-for-review)',
+  })
+  async updatePipelineStatus(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdatePipelineStatusDto,
+  ) {
+    const { tenantId, userId } = req.user as RequestUser;
+    return this.clientPipelineService.setManualStatus(tenantId, id, dto.status, userId);
+  }
+
   /** Resend HMRC invitation for an existing client */
   @Post(':id/resend-invitation')
   @ApiOperation({ summary: 'Resend HMRC authorisation invitation for an existing client' })
@@ -111,13 +137,14 @@ export class ClientsController {
     @Param('id') id: string,
     @Body() dto: ResendInvitationDto,
   ) {
-    const { tenantId, email } = req.user as RequestUser;
+    const { tenantId, email, userId } = req.user as RequestUser;
     return this.clientsService.resendInvitation(
       tenantId,
       id,
       email,
       dto.personalMessage,
       this.fraudContext(req),
+      userId,
     );
   }
 
@@ -288,17 +315,17 @@ export class ClientsController {
     @Param('id') id: string,
     @Body() dto: SendPortalMessageDto,
   ) {
-    const { tenantId } = req.user as RequestUser;
-    return this.portalService.sendMessage(tenantId, id, dto);
+    const { tenantId, userId } = req.user as RequestUser;
+    return this.portalService.sendMessage(tenantId, id, dto, userId);
   }
 
   /** Resend portal setup invite email */
   @Post(':id/portal-invite')
   @ApiOperation({ summary: 'Resend client portal setup invite' })
   async resendPortalInvite(@Request() req: ExpressRequest, @Param('id') id: string) {
-    const { tenantId } = req.user as RequestUser;
+    const { tenantId, userId } = req.user as RequestUser;
     const client = await this.clientsService.findOne(tenantId, id);
-    await this.portalService.createAndInvite(tenantId, id, client.email, client.name);
+    await this.portalService.createAndInvite(tenantId, id, client.email, client.name, userId);
     return { message: 'Portal invite resent' };
   }
 

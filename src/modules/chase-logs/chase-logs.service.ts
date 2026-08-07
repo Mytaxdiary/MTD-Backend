@@ -6,6 +6,7 @@ import { CreateChaseLogDto } from './dto/create-chase-log.dto';
 import { Client } from '../clients/entities/client.entity';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { MailService } from '../mail/mail.service';
+import { ClientPipelineService } from '../clients/client-pipeline.service';
 
 export type ChaseLogSummary = {
   clientId: string;
@@ -26,22 +27,28 @@ export class ChaseLogsService {
     @InjectRepository(Tenant)
     private readonly tenantRepo: Repository<Tenant>,
     private readonly mailService: MailService,
+    private readonly clientPipelineService: ClientPipelineService,
   ) {}
 
   /**
    * Create a chase log entry and send the email (channel = email) or log SMS stub.
    */
-  async create(tenantId: string, dto: CreateChaseLogDto): Promise<ChaseLog> {
+  async create(tenantId: string, dto: CreateChaseLogDto, actingUserId?: string): Promise<ChaseLog> {
     const log = this.repo.create({
       ...dto,
       tenantId,
       sentAt: new Date(),
       status: 'sent',
+      sentByUserId: actingUserId,
     });
     const saved = await this.repo.save(log);
 
+    await this.clientPipelineService.markChased(tenantId, dto.clientId).catch((err: unknown) => {
+      this.logger.warn(`Pipeline chased transition failed for ${dto.clientId}: ${String(err)}`);
+    });
+
     // Fire-and-forget: send the actual email / log SMS
-    void this.dispatch(tenantId, dto).catch((err: unknown) => {
+    void this.dispatch(tenantId, dto, saved.id, actingUserId).catch((err: unknown) => {
       this.logger.error(`Chase dispatch failed for client ${dto.clientId}`, err);
     });
 
@@ -51,7 +58,12 @@ export class ChaseLogsService {
   /**
    * Resolve client email + send via MailService (email) or log stub (SMS).
    */
-  private async dispatch(tenantId: string, dto: CreateChaseLogDto): Promise<void> {
+  private async dispatch(
+    tenantId: string,
+    dto: CreateChaseLogDto,
+    logId: string,
+    actingUserId?: string,
+  ): Promise<void> {
     const client = await this.clientRepo.findOne({
       where: { id: dto.clientId, tenantId },
     });
@@ -61,7 +73,16 @@ export class ChaseLogsService {
     }
 
     if (dto.channel === 'email') {
-      await this.mailService.sendChaseEmail(client.email, dto.subject, dto.body);
+      const meta = await this.mailService.sendChaseEmail(
+        client.email,
+        dto.subject,
+        dto.body,
+        actingUserId,
+      );
+      await this.repo.update(logId, {
+        fromEmail: meta.fromEmail,
+        sendVia: meta.via,
+      });
     } else {
       // SMS stub — log for now, integrate SMS provider later
       const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
