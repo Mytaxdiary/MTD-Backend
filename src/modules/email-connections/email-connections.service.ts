@@ -134,9 +134,16 @@ export class EmailConnectionsService {
     const accessToken = tokenData.access_token;
     const emailAddress = await this.fetchMailboxEmail(provider, accessToken);
 
+    // Include soft-deleted rows — disconnect uses softRemove, but userId is globally unique.
+    // Reconnecting must revive the same row; `deletedAt = undefined` is ignored on save.
     const existing = await this.connectionRepo.findOne({
-      where: { userId, deletedAt: IsNull() },
+      where: { userId },
+      withDeleted: true,
     });
+    if (existing?.deletedAt) {
+      await this.connectionRepo.restore(existing.id);
+      existing.deletedAt = undefined;
+    }
     const connection = existing ?? this.connectionRepo.create({ userId, tenantId });
     connection.tenantId = tenantId;
     connection.provider = provider;

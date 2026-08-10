@@ -84,7 +84,8 @@ export class EmailConnectionsController {
       provider: connection.provider,
       emailAddress: connection.emailAddress,
       status: connection.status,
-      accessTokenExpiresAt: connection.accessTokenExpiresAt,
+      connectedAt: connection.connectedAt?.toISOString(),
+      accessTokenExpiresAt: connection.accessTokenExpiresAt?.toISOString(),
     };
   }
 
