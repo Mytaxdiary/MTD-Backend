@@ -154,3 +154,79 @@ export function currentChaseQuarter(): QuarterInfo {
   const nextYearQuarters = taxYearQuarters(taxYearStart + 1);
   return nextYearQuarters[0];
 }
+
+/** Current UK tax year start year (6 Apr boundary). */
+export function currentUkTaxYearStart(now = new Date()): number {
+  return now.getMonth() > 3 || (now.getMonth() === 3 && now.getDate() >= 6)
+    ? now.getFullYear()
+    : now.getFullYear() - 1;
+}
+
+/** Inclusive HMRC date range for the current UK tax year. */
+export function currentUkTaxYearDateRange(now = new Date()): { fromDate: string; toDate: string } {
+  const y = currentUkTaxYearStart(now);
+  return {
+    fromDate: `${y}-04-06`,
+    toDate: `${y + 1}-04-05`,
+  };
+}
+
+/** Q1–Q4 from obligation period start (UK MTD calendar). */
+export function ukQuarterCodeFromPeriodStart(
+  periodStartDate: string,
+): 'Q1' | 'Q2' | 'Q3' | 'Q4' | 'Q?' {
+  const d = new Date(
+    periodStartDate.includes('T') ? periodStartDate : `${periodStartDate}T00:00:00`,
+  );
+  const month = d.getMonth();
+  const day = d.getDate();
+
+  if (month === 3 && day >= 6) return 'Q1';
+  if (month >= 4 && month <= 5) return 'Q1';
+  if (month === 6 && day <= 5) return 'Q1';
+
+  if (month === 6 && day >= 6) return 'Q2';
+  if (month >= 7 && month <= 8) return 'Q2';
+  if (month === 9 && day <= 5) return 'Q2';
+
+  if (month === 9 && day >= 6) return 'Q3';
+  if (month >= 10 && month <= 11) return 'Q3';
+  if (month === 0 && day <= 5) return 'Q3';
+
+  if (month === 0 && day >= 6) return 'Q4';
+  if (month >= 1 && month <= 2) return 'Q4';
+  if (month === 3 && day <= 5) return 'Q4';
+
+  return 'Q?';
+}
+
+/** e.g. "Q1 2025–26" from period start. */
+export function quarterLabelFromPeriodStart(periodStartDate: string): string {
+  const code = ukQuarterCodeFromPeriodStart(periodStartDate);
+  const d = new Date(
+    periodStartDate.includes('T') ? periodStartDate : `${periodStartDate}T00:00:00`,
+  );
+  // Tax year for a period is the year containing 6 Apr that starts that year
+  let taxYearStart = d.getFullYear();
+  if (d.getMonth() < 3 || (d.getMonth() === 3 && d.getDate() < 6)) {
+    taxYearStart -= 1;
+  }
+  return `${code} ${taxYearStart}–${String(taxYearStart + 1).slice(2)}`;
+}
+
+export function formatUkLongDate(isoDate: string): string {
+  const d = new Date(isoDate.includes('T') ? isoDate : `${isoDate}T00:00:00`);
+  return d.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+/** Whole days from `from` to `to` (date-only safe). */
+export function daysBetween(fromIso: string, to = new Date()): number {
+  const from = new Date(fromIso.includes('T') ? fromIso : `${fromIso}T00:00:00`);
+  const start = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
+  const end = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
+  return Math.floor((end - start) / 86_400_000);
+}

@@ -20,6 +20,22 @@ export class ChaseLog extends TenantAwareBaseEntity {
   @Column({ name: 'business_name', type: 'varchar', length: 255, nullable: true })
   businessName?: string | null;
 
+  /** HMRC obligation period start — scopes chase to one quarter */
+  @Column({ name: 'period_start_date', type: 'date', nullable: true })
+  periodStartDate?: string | null;
+
+  /** HMRC obligation period end */
+  @Column({ name: 'period_end_date', type: 'date', nullable: true })
+  periodEndDate?: string | null;
+
+  /** HMRC due date for the chased period */
+  @Column({ name: 'due_date', type: 'date', nullable: true })
+  dueDate?: string | null;
+
+  /** e.g. Q1 2025–26 — denormalised for history UI */
+  @Column({ name: 'quarter_label', type: 'varchar', length: 32, nullable: true })
+  quarterLabel?: string | null;
+
   /** FK to chase_templates.id — nullable so logs survive template deletion */
   @Column({ name: 'template_id', type: 'varchar', length: 36, nullable: true })
   templateId?: string;

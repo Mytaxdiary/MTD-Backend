@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 export class CreateChaseLogDto {
   @IsString()
@@ -16,6 +16,30 @@ export class CreateChaseLogDto {
   @IsOptional()
   @MaxLength(255)
   businessName?: string;
+
+  /** Obligation period start (YYYY-MM-DD) */
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  periodStartDate?: string;
+
+  /** Obligation period end (YYYY-MM-DD) */
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  periodEndDate?: string;
+
+  /** HMRC due date (YYYY-MM-DD) */
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  dueDate?: string;
+
+  /** e.g. Q1 2025–26 */
+  @IsString()
+  @IsOptional()
+  @MaxLength(32)
+  quarterLabel?: string;
 
   @IsString()
   @IsOptional()

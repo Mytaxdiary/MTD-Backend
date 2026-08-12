@@ -18,8 +18,31 @@ export type ChaseBusinessSummary = ChaseLogSummary & {
   businessId: string | null;
 };
 
+export type ChasePeriodSummary = ChaseBusinessSummary & {
+  periodStartDate: string | null;
+};
+
+/** Legacy / business-only key: clientId::businessId */
 export function chaseRowKey(clientId: string, businessId?: string | null): string {
   return `${clientId}::${businessId ?? ''}`;
+}
+
+/** Period-scoped key: clientId::businessId::periodStartDate */
+export function chasePeriodRowKey(
+  clientId: string,
+  businessId?: string | null,
+  periodStartDate?: string | null,
+): string {
+  return `${clientId}::${businessId ?? ''}::${periodStartDate ?? ''}`;
+}
+
+function normalizeDateKey(value?: string | Date | null): string | null {
+  if (value == null || value === '') return null;
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+  const s = String(value).trim();
+  return s.length >= 10 ? s.slice(0, 10) : s;
 }
 
 @Injectable()
@@ -38,13 +61,17 @@ export class ChaseLogsService {
 
   /**
    * Create a chase log entry and send the email (channel = email) or log SMS stub.
-   * Status is per business row via businessId — does not flip whole-client pipeline.
+   * Status is per business×period via businessId + periodStartDate.
    */
   async create(tenantId: string, dto: CreateChaseLogDto, actingUserId?: string): Promise<ChaseLog> {
     const log = this.repo.create({
       clientId: dto.clientId,
       businessId: dto.businessId?.trim() || null,
       businessName: dto.businessName?.trim() || null,
+      periodStartDate: dto.periodStartDate?.trim() || null,
+      periodEndDate: dto.periodEndDate?.trim() || null,
+      dueDate: dto.dueDate?.trim() || null,
+      quarterLabel: dto.quarterLabel?.trim() || null,
       templateId: dto.templateId,
       channel: dto.channel,
       subject: dto.subject,
@@ -178,6 +205,61 @@ export class ChaseLogsService {
       map.set(key, {
         clientId: t.clientId,
         businessId: bizId,
+        lastChaseAt: matched[0]?.sentAt ?? null,
+        chaseCount: matched.length,
+        lastStatus: matched[0]?.status ?? null,
+      });
+    }
+    return map;
+  }
+
+  /**
+   * Per-business×period chase summary.
+   * Key = clientId::businessId::periodStartDate
+   */
+  async summaryForPeriods(
+    tenantId: string,
+    targets: Array<{
+      clientId: string;
+      businessId?: string | null;
+      periodStartDate?: string | null;
+    }>,
+    since?: Date,
+  ): Promise<Map<string, ChasePeriodSummary>> {
+    if (targets.length === 0) return new Map();
+
+    const clientIds = [...new Set(targets.map((t) => t.clientId))];
+    const logs = await this.repo.find({
+      where: clientIds.map((cid) => ({ tenantId, clientId: cid, deletedAt: IsNull() })),
+      order: { sentAt: 'DESC' },
+    });
+
+    const map = new Map<string, ChasePeriodSummary>();
+    for (const t of targets) {
+      const bizId = t.businessId ?? null;
+      const period = normalizeDateKey(t.periodStartDate);
+      const key = chasePeriodRowKey(t.clientId, bizId, period);
+      const matched = logs.filter((l) => {
+        if (l.clientId !== t.clientId) return false;
+        const logBiz = l.businessId ?? null;
+        if (bizId) {
+          if (logBiz !== bizId) return false;
+        } else if (logBiz) {
+          return false;
+        }
+        const logPeriod = normalizeDateKey(l.periodStartDate);
+        if (period) {
+          if (logPeriod !== period) return false;
+        } else if (logPeriod) {
+          return false;
+        }
+        if (!since) return true;
+        return l.sentAt.getTime() >= since.getTime();
+      });
+      map.set(key, {
+        clientId: t.clientId,
+        businessId: bizId,
+        periodStartDate: period,
         lastChaseAt: matched[0]?.sentAt ?? null,
         chaseCount: matched.length,
         lastStatus: matched[0]?.status ?? null,

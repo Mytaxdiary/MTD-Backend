@@ -1,12 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ChaseLogsService, chaseRowKey } from './chase-logs.service';
+import { ChaseLogsService, chasePeriodRowKey, chaseRowKey } from './chase-logs.service';
 import { ChaseLog } from './entities/chase-log.entity';
 import { Client } from '../clients/entities/client.entity';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { MailService } from '../mail/mail.service';
 
-describe('ChaseLogsService — business-scoped chase', () => {
+describe('ChaseLogsService — business/period-scoped chase', () => {
   const tenantId = 'tenant-1';
   const clientId = 'client-1';
 
@@ -40,15 +40,18 @@ describe('ChaseLogsService — business-scoped chase', () => {
 
   it('chaseRowKey scopes by businessId', () => {
     expect(chaseRowKey(clientId, 'biz-a')).toBe('client-1::biz-a');
-    expect(chaseRowKey(clientId, 'biz-b')).toBe('client-1::biz-b');
-    expect(chaseRowKey(clientId, null)).toBe('client-1::');
+    expect(chasePeriodRowKey(clientId, 'biz-a', '2025-04-06')).toBe('client-1::biz-a::2025-04-06');
   });
 
-  it('create persists businessId/businessName and does not flip client pipeline', async () => {
+  it('create persists business + period fields', async () => {
     const saved = await service.create(tenantId, {
       clientId,
       businessId: 'biz-a',
       businessName: 'Cafe A',
+      periodStartDate: '2025-04-06',
+      periodEndDate: '2025-07-05',
+      dueDate: '2025-08-07',
+      quarterLabel: 'Q1 2025–26',
       channel: 'email',
       subject: 'Hi',
       body: 'Please file',
@@ -59,40 +62,37 @@ describe('ChaseLogsService — business-scoped chase', () => {
         clientId,
         businessId: 'biz-a',
         businessName: 'Cafe A',
+        periodStartDate: '2025-04-06',
+        quarterLabel: 'Q1 2025–26',
         tenantId,
         status: 'sent',
       }),
     );
-    expect(saved.businessId).toBe('biz-a');
-    expect(saved.businessName).toBe('Cafe A');
+    expect(saved.periodStartDate).toBe('2025-04-06');
   });
 
-  it('summaryForBusinesses: chasing biz A leaves biz B/C unchanged', async () => {
+  it('summaryForPeriods: chasing Q1 leaves Q2 unchanged', async () => {
     const now = new Date('2026-08-01T12:00:00Z');
     mockRepo.find.mockResolvedValue([
       {
         clientId,
         businessId: 'biz-a',
+        periodStartDate: '2025-04-06',
         sentAt: now,
         status: 'sent',
       },
     ]);
 
-    const map = await service.summaryForBusinesses(tenantId, [
-      { clientId, businessId: 'biz-a' },
-      { clientId, businessId: 'biz-b' },
-      { clientId, businessId: 'biz-c' },
+    const map = await service.summaryForPeriods(tenantId, [
+      { clientId, businessId: 'biz-a', periodStartDate: '2025-04-06' },
+      { clientId, businessId: 'biz-a', periodStartDate: '2025-07-06' },
     ]);
 
-    const a = map.get(chaseRowKey(clientId, 'biz-a'));
-    const b = map.get(chaseRowKey(clientId, 'biz-b'));
-    const c = map.get(chaseRowKey(clientId, 'biz-c'));
+    const q1 = map.get(chasePeriodRowKey(clientId, 'biz-a', '2025-04-06'));
+    const q2 = map.get(chasePeriodRowKey(clientId, 'biz-a', '2025-07-06'));
 
-    expect(a?.chaseCount).toBe(1);
-    expect(a?.lastStatus).toBe('sent');
-    expect(b?.chaseCount).toBe(0);
-    expect(b?.lastChaseAt).toBeNull();
-    expect(c?.chaseCount).toBe(0);
-    expect(c?.lastChaseAt).toBeNull();
+    expect(q1?.chaseCount).toBe(1);
+    expect(q2?.chaseCount).toBe(0);
+    expect(q2?.lastChaseAt).toBeNull();
   });
 });

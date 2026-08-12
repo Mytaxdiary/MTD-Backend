@@ -7,7 +7,6 @@ import { ChaseService } from './chase.service';
 import { ChaseLogsService } from '../chase-logs/chase-logs.service';
 import { ChaseTemplatesService } from '../chase-templates/chase-templates.service';
 import { chaseGreetingName, renderTemplate } from './chase-template-vars.util';
-import { currentChaseQuarter } from './chase-template-vars.util';
 
 /**
  * Minimum days that must have passed since the last chase before we auto-send again.
@@ -75,11 +74,10 @@ export class ChaseSchedulerService {
   // ─── Per-tenant logic ──────────────────────────────────────────────────────
 
   private async processTenant(tenant: Tenant): Promise<{ sent: number; skipped: number }> {
-    const clients = await this.chaseService.listNeedsChasing(tenant.id);
+    const clients = await this.chaseService.listAllNeedsChasing(tenant.id);
     if (clients.length === 0) return { sent: 0, skipped: 0 };
 
     const templates = await this.chaseTemplatesService.list(tenant.id);
-    const quarter = currentChaseQuarter();
     const now = new Date();
 
     const firmName = tenant.firmName ?? 'Your accountancy firm';
@@ -89,7 +87,7 @@ export class ChaseSchedulerService {
     let skipped = 0;
 
     for (const client of clients) {
-      // ── Decide whether this client needs a chase today ──────────────────────
+      // ── Decide whether this open period needs a chase today ─────────────────
 
       const isOverdue = client.daysOverdue >= 1;
       // Trigger as soon as the obligation period ends (day 1 after period close)
@@ -100,7 +98,7 @@ export class ChaseSchedulerService {
         continue;
       }
 
-      // ── Cooldown check — skip if chased recently ────────────────────────────
+      // ── Cooldown check — skip if this period was chased recently ────────────
       if (client.lastChase) {
         const lastChaseDate = new Date(client.lastChase);
         const daysSince = Math.floor((now.getTime() - lastChaseDate.getTime()) / 86_400_000);
@@ -121,13 +119,13 @@ export class ChaseSchedulerService {
         continue;
       }
 
-      // ── Render template variables ────────────────────────────────────────────
+      // ── Render template variables from the row’s obligation ─────────────────
       const vars = {
         name: client.greetingName ?? chaseGreetingName(client.name, client.preferredName),
         business: client.business,
         business_name: client.businessName ?? client.business,
-        quarter: quarter.label,
-        deadline: quarter.deadlineFormatted,
+        quarter: client.quarter,
+        deadline: client.deadline,
         agent_name: agentName,
         firm_name: firmName,
       };
@@ -141,6 +139,10 @@ export class ChaseSchedulerService {
           clientId: client.id,
           businessId: client.businessId ?? undefined,
           businessName: client.businessName ?? undefined,
+          periodStartDate: client.periodStartDate ?? undefined,
+          periodEndDate: client.periodEndDate ?? undefined,
+          dueDate: client.dueDate ?? undefined,
+          quarterLabel: client.quarter,
           templateId: template.id,
           channel: 'email',
           subject,
@@ -148,7 +150,7 @@ export class ChaseSchedulerService {
         });
         sent++;
         this.logger.debug(
-          `Auto-chase sent to client ${client.id} business ${client.businessId ?? 'n/a'} (tenant ${tenant.id}): "${subject}"`,
+          `Auto-chase sent to client ${client.id} business ${client.businessId ?? 'n/a'} period ${client.periodStartDate ?? 'n/a'} (tenant ${tenant.id}): "${subject}"`,
         );
       } catch (err) {
         this.logger.error(
