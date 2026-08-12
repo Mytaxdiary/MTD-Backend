@@ -263,7 +263,18 @@ export class ClientsService {
     query: ListClientsQueryDto = {},
     fraudContext?: HmrcFraudRequestContext | null,
   ): Promise<{
-    clients: Client[];
+    clients: Array<
+      Client & {
+        businesses: Array<{
+          businessId: string;
+          typeOfBusiness: string;
+          tradingName?: string;
+          chaseCount: number;
+          lastChaseAt: string | null;
+          lastChaseStatus: string | null;
+        }>;
+      }
+    >;
     total: number;
     page: number;
     limit: number;
@@ -273,6 +284,7 @@ export class ClientsService {
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
     const status = query.status ?? 'all';
     const search = (query.search ?? '').trim().toLowerCase();
+    const agentType = (query.agentType ?? 'all').trim().toLowerCase();
 
     // Build DB WHERE — status filter applied at query level
     const base: FindOptionsWhere<Client> = { tenantId };
@@ -313,18 +325,111 @@ export class ClientsService {
       );
     }
 
+    if (agentType === 'main' || agentType === 'supporting') {
+      all = all.filter((c) => (c.agentType ?? 'main').toLowerCase() === agentType);
+    }
+
     const total = all.length;
     const totalPages = Math.max(1, Math.ceil(total / limit));
     const safePage = Math.min(page, totalPages);
     const offset = (safePage - 1) * limit;
+    const pageClients = all.slice(offset, offset + limit);
+
+    const clients = await Promise.all(
+      pageClients.map(async (c) => {
+        const sources = c.authorisedAt
+          ? await this.listBusinessIncomeSources(tenantId, c.id, fraudContext)
+          : [];
+        return Object.assign(c, {
+          businesses: sources.map((b) => ({
+            businessId: b.businessId,
+            typeOfBusiness: b.typeOfBusiness,
+            tradingName: b.tradingName,
+            chaseCount: 0,
+            lastChaseAt: null as string | null,
+            lastChaseStatus: null as string | null,
+          })),
+        });
+      }),
+    );
+
+    // Attach per-business chase summaries when any businesses exist
+    const targets = clients.flatMap((c) =>
+      c.businesses.map((b) => ({ clientId: c.id, businessId: b.businessId })),
+    );
+    if (targets.length > 0) {
+      // Lazy import avoided — use pipeline-free chase summary via dataSource query
+      const summaryMap = await this.loadBusinessChaseSummaries(tenantId, targets);
+      for (const c of clients) {
+        c.businesses = c.businesses.map((b) => {
+          const key = `${c.id}::${b.businessId}`;
+          const s = summaryMap.get(key);
+          return {
+            ...b,
+            chaseCount: s?.chaseCount ?? 0,
+            lastChaseAt: s?.lastChaseAt ?? null,
+            lastChaseStatus: s?.lastChaseStatus ?? null,
+          };
+        });
+      }
+    }
 
     return {
-      clients: all.slice(offset, offset + limit),
+      clients,
       total,
       page: safePage,
       limit,
       totalPages,
     };
+  }
+
+  /** Per-business chase stats for clients list (avoids circular ChaseLogsModule import). */
+  private async loadBusinessChaseSummaries(
+    tenantId: string,
+    targets: Array<{ clientId: string; businessId: string }>,
+  ): Promise<
+    Map<string, { chaseCount: number; lastChaseAt: string | null; lastChaseStatus: string | null }>
+  > {
+    const map = new Map<
+      string,
+      { chaseCount: number; lastChaseAt: string | null; lastChaseStatus: string | null }
+    >();
+    if (targets.length === 0) return map;
+
+    const clientIds = [...new Set(targets.map((t) => t.clientId))];
+    const rows: Array<{
+      client_id: string;
+      business_id: string | null;
+      chase_count: string;
+      last_chase_at: Date | null;
+      last_status: string | null;
+    }> = await this.dataSource.query(
+      `
+      SELECT
+        client_id,
+        business_id,
+        COUNT(*) AS chase_count,
+        MAX(sent_at) AS last_chase_at,
+        SUBSTRING_INDEX(GROUP_CONCAT(status ORDER BY sent_at DESC), ',', 1) AS last_status
+      FROM chase_logs
+      WHERE tenant_id = ?
+        AND deletedAt IS NULL
+        AND client_id IN (${clientIds.map(() => '?').join(',')})
+        AND business_id IS NOT NULL
+      GROUP BY client_id, business_id
+      `,
+      [tenantId, ...clientIds],
+    );
+
+    for (const r of rows) {
+      if (!r.business_id) continue;
+      map.set(`${r.client_id}::${r.business_id}`, {
+        chaseCount: Number(r.chase_count) || 0,
+        lastChaseAt: r.last_chase_at ? new Date(r.last_chase_at).toISOString() : null,
+        lastChaseStatus: r.last_status,
+      });
+    }
+    return map;
   }
 
   /** Clients with an HMRC invitation awaiting acceptance (sandbox / live pending). */
@@ -531,6 +636,26 @@ export class ClientsService {
       return text ? (JSON.parse(text) as ItsaStatusResponse) : { itsaStatuses: [] };
     } catch {
       throw new InternalServerErrorException('HMRC returned invalid JSON for ITSA status.');
+    }
+  }
+
+  /**
+   * Lightweight business list for clients list / chase rows.
+   * Returns [] when not authorised or HMRC fails (never throws).
+   */
+  async listBusinessIncomeSources(
+    tenantId: string,
+    clientId: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<Array<{ businessId: string; typeOfBusiness: string; tradingName?: string }>> {
+    try {
+      const client = await this.findOne(tenantId, clientId);
+      if (!client.authorisedAt) return [];
+      const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+      return await this.listBusinessesLite(client.nino, accessToken, fraudContext);
+    } catch (err) {
+      this.logger.warn(`listBusinessIncomeSources failed for ${clientId}: ${String(err)}`);
+      return [];
     }
   }
 

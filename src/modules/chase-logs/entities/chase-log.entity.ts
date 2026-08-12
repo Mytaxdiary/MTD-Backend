@@ -12,6 +12,14 @@ export class ChaseLog extends TenantAwareBaseEntity {
   @Column({ name: 'client_id', type: 'varchar', length: 36 })
   clientId: string;
 
+  /** HMRC business income source id — null for legacy client-level chases */
+  @Column({ name: 'business_id', type: 'varchar', length: 64, nullable: true })
+  businessId?: string | null;
+
+  /** Trading name at send time (denormalised for history UI) */
+  @Column({ name: 'business_name', type: 'varchar', length: 255, nullable: true })
+  businessName?: string | null;
+
   /** FK to chase_templates.id — nullable so logs survive template deletion */
   @Column({ name: 'template_id', type: 'varchar', length: 36, nullable: true })
   templateId?: string;

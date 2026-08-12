@@ -125,6 +125,7 @@ export class ChaseSchedulerService {
       const vars = {
         name: client.greetingName ?? chaseGreetingName(client.name, client.preferredName),
         business: client.business,
+        business_name: client.businessName ?? client.business,
         quarter: quarter.label,
         deadline: quarter.deadlineFormatted,
         agent_name: agentName,
@@ -138,6 +139,8 @@ export class ChaseSchedulerService {
       try {
         await this.chaseLogsService.create(tenant.id, {
           clientId: client.id,
+          businessId: client.businessId ?? undefined,
+          businessName: client.businessName ?? undefined,
           templateId: template.id,
           channel: 'email',
           subject,
@@ -145,7 +148,7 @@ export class ChaseSchedulerService {
         });
         sent++;
         this.logger.debug(
-          `Auto-chase sent to client ${client.id} (tenant ${tenant.id}): "${subject}"`,
+          `Auto-chase sent to client ${client.id} business ${client.businessId ?? 'n/a'} (tenant ${tenant.id}): "${subject}"`,
         );
       } catch (err) {
         this.logger.error(

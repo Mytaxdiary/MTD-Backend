@@ -2,16 +2,18 @@
  * Template variable substitution for chase emails/SMS.
  *
  * Supported variables:
- *   {name}        – preferred name if set, otherwise first name (greeting)
- *   {business}    – client's business / trading name
- *   {quarter}     – e.g. "Q1 2026–27"
- *   {deadline}    – e.g. "7 August 2026"
- *   {agent_name}  – logged-in agent's name
- *   {firm_name}   – firm name
+ *   {name}           – preferred name if set, otherwise first name (greeting)
+ *   {business}       – client NINO (legacy)
+ *   {business_name}  – HMRC trading name for the chased business
+ *   {quarter}        – e.g. "Q1 2026–27"
+ *   {deadline}       – e.g. "7 August 2026"
+ *   {agent_name}     – logged-in agent's name
+ *   {firm_name}      – firm name
  */
 export type TemplateVars = {
   name: string;
   business: string;
+  business_name?: string;
   quarter: string;
   deadline: string;
   agent_name: string;
@@ -32,6 +34,7 @@ export function chaseGreetingName(fullName: string, preferredName?: string | nul
 export function renderTemplate(template: string, vars: TemplateVars): string {
   return template
     .replace(/{name}/g, vars.name)
+    .replace(/{business_name}/g, vars.business_name ?? vars.business)
     .replace(/{business}/g, vars.business)
     .replace(/{quarter}/g, vars.quarter)
     .replace(/{deadline}/g, vars.deadline)

@@ -2,33 +2,32 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
 import { Client } from '../clients/entities/client.entity';
-import { ChaseLogsService } from '../chase-logs/chase-logs.service';
+import { ClientsService } from '../clients/clients.service';
+import { ChaseLogsService, chaseRowKey } from '../chase-logs/chase-logs.service';
 import { chaseGreetingName, currentChaseQuarter } from './chase-template-vars.util';
 
 export type ChaseClientDto = {
+  /** Unique row key: clientId::businessId */
+  rowKey: string;
   id: string;
+  businessId: string | null;
+  /** HMRC trading name (or fallback label) */
+  businessName: string | null;
+  typeOfBusiness: string | null;
   /** Full legal name (for list display) */
   name: string;
-  /** Preferred short name if set by agent */
   preferredName?: string;
-  /** Greeting for templates: preferred name or first name */
   greetingName: string;
-  /** NINO — used as secondary identifier */
+  /** NINO — legacy {business} template var */
   business: string;
   deadline: string;
-  /** positive = overdue days, negative = days remaining */
   daysOverdue: number;
-  /** positive = days since obligation period ended, negative = period still open */
   daysSincePeriodEnd: number;
-  /** quarter label e.g. "Q1 2026–27" */
   quarter: string;
   lastChase: string | null;
   chaseCount: number;
-  /** last chase status: sent | opened | responded | bounced | null */
   status: string;
-  /** email | sms */
   channel: string;
-  /** bookkeeping | data-request — defaults to 'bookkeeping' if not set */
   workflowType: string;
 };
 
@@ -38,11 +37,12 @@ export class ChaseService {
     @InjectRepository(Client)
     private readonly clientRepo: Repository<Client>,
     private readonly chaseLogsService: ChaseLogsService,
+    private readonly clientsService: ClientsService,
   ) {}
 
   /**
-   * Returns all authorised clients for the tenant with their chase info.
-   * Clients are sorted: overdue first (descending daysOverdue), then upcoming.
+   * Authorised clients expanded to one row per HMRC business.
+   * If HMRC returns no businesses, one fallback row (businessId null) is kept.
    */
   async listNeedsChasing(tenantId: string): Promise<ChaseClientDto[]> {
     const authorisedClients = await this.clientRepo.find({
@@ -53,25 +53,56 @@ export class ChaseService {
     if (authorisedClients.length === 0) return [];
 
     const quarter = currentChaseQuarter();
-    const clientIds = authorisedClients.map((c) => c.id);
-    const summaryMap = await this.chaseLogsService.summaryForClients(tenantId, clientIds);
 
-    const rows: ChaseClientDto[] = authorisedClients.map((c) => {
-      const summary = summaryMap.get(c.id);
+    const expanded = await Promise.all(
+      authorisedClients.map(async (c) => {
+        const businesses = await this.clientsService.listBusinessIncomeSources(tenantId, c.id);
+        if (businesses.length === 0) {
+          return [
+            {
+              client: c,
+              businessId: null as string | null,
+              businessName: null as string | null,
+              typeOfBusiness: null as string | null,
+            },
+          ];
+        }
+        return businesses.map((b) => ({
+          client: c,
+          businessId: b.businessId,
+          businessName: b.tradingName?.trim() || b.typeOfBusiness || b.businessId,
+          typeOfBusiness: b.typeOfBusiness,
+        }));
+      }),
+    );
+
+    const flat = expanded.flat();
+    const targets = flat.map((r) => ({
+      clientId: r.client.id,
+      businessId: r.businessId,
+    }));
+    const summaryMap = await this.chaseLogsService.summaryForBusinesses(tenantId, targets);
+
+    const rows: ChaseClientDto[] = flat.map((r) => {
+      const key = chaseRowKey(r.client.id, r.businessId);
+      const summary = summaryMap.get(key);
       const lastChaseAt = summary?.lastChaseAt ?? null;
 
-      // Determine effective status from last chase
       let status = 'not-started';
       if (lastChaseAt) {
         status = summary?.lastStatus ?? 'sent';
       }
 
       return {
-        id: c.id,
-        name: c.name,
-        preferredName: c.preferredName,
-        greetingName: chaseGreetingName(c.name, c.preferredName),
-        business: c.nino,
+        rowKey: key,
+        id: r.client.id,
+        businessId: r.businessId,
+        businessName: r.businessName,
+        typeOfBusiness: r.typeOfBusiness,
+        name: r.client.name,
+        preferredName: r.client.preferredName,
+        greetingName: chaseGreetingName(r.client.name, r.client.preferredName),
+        business: r.client.nino,
         deadline: quarter.deadlineFormatted,
         daysOverdue: quarter.daysOverdue,
         daysSincePeriodEnd: quarter.daysSincePeriodEnd,
@@ -86,16 +117,17 @@ export class ChaseService {
         chaseCount: summary?.chaseCount ?? 0,
         status,
         channel: 'email',
-        workflowType: c.workflowType ?? 'bookkeeping',
+        workflowType: r.client.workflowType ?? 'bookkeeping',
       };
     });
 
-    // Sort: overdue first (daysOverdue > 0 desc), then upcoming (asc by daysOverdue)
     return rows.sort((a, b) => {
       if (a.daysOverdue > 0 && b.daysOverdue <= 0) return -1;
       if (a.daysOverdue <= 0 && b.daysOverdue > 0) return 1;
       if (a.daysOverdue > 0 && b.daysOverdue > 0) return b.daysOverdue - a.daysOverdue;
-      return a.daysOverdue - b.daysOverdue;
+      const nameCmp = a.name.localeCompare(b.name);
+      if (nameCmp !== 0) return nameCmp;
+      return (a.businessName ?? '').localeCompare(b.businessName ?? '');
     });
   }
 }

@@ -5,6 +5,18 @@ export class CreateChaseLogDto {
   @IsNotEmpty()
   clientId: string;
 
+  /** HMRC business id — scopes this chase to one business row */
+  @IsString()
+  @IsOptional()
+  @MaxLength(64)
+  businessId?: string;
+
+  /** Trading name snapshot for history / templates */
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  businessName?: string;
+
   @IsString()
   @IsOptional()
   templateId?: string;

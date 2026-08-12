@@ -6,7 +6,6 @@ import { CreateChaseLogDto } from './dto/create-chase-log.dto';
 import { Client } from '../clients/entities/client.entity';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { MailService } from '../mail/mail.service';
-import { ClientPipelineService } from '../clients/client-pipeline.service';
 
 export type ChaseLogSummary = {
   clientId: string;
@@ -14,6 +13,14 @@ export type ChaseLogSummary = {
   chaseCount: number;
   lastStatus: string | null;
 };
+
+export type ChaseBusinessSummary = ChaseLogSummary & {
+  businessId: string | null;
+};
+
+export function chaseRowKey(clientId: string, businessId?: string | null): string {
+  return `${clientId}::${businessId ?? ''}`;
+}
 
 @Injectable()
 export class ChaseLogsService {
@@ -27,15 +34,21 @@ export class ChaseLogsService {
     @InjectRepository(Tenant)
     private readonly tenantRepo: Repository<Tenant>,
     private readonly mailService: MailService,
-    private readonly clientPipelineService: ClientPipelineService,
   ) {}
 
   /**
    * Create a chase log entry and send the email (channel = email) or log SMS stub.
+   * Status is per business row via businessId — does not flip whole-client pipeline.
    */
   async create(tenantId: string, dto: CreateChaseLogDto, actingUserId?: string): Promise<ChaseLog> {
     const log = this.repo.create({
-      ...dto,
+      clientId: dto.clientId,
+      businessId: dto.businessId?.trim() || null,
+      businessName: dto.businessName?.trim() || null,
+      templateId: dto.templateId,
+      channel: dto.channel,
+      subject: dto.subject,
+      body: dto.body,
       tenantId,
       sentAt: new Date(),
       status: 'sent',
@@ -43,11 +56,6 @@ export class ChaseLogsService {
     });
     const saved = await this.repo.save(log);
 
-    await this.clientPipelineService.markChased(tenantId, dto.clientId).catch((err: unknown) => {
-      this.logger.warn(`Pipeline chased transition failed for ${dto.clientId}: ${String(err)}`);
-    });
-
-    // Fire-and-forget: send the actual email / log SMS
     void this.dispatch(tenantId, dto, saved.id, actingUserId).catch((err: unknown) => {
       this.logger.error(`Chase dispatch failed for client ${dto.clientId}`, err);
     });
@@ -55,9 +63,6 @@ export class ChaseLogsService {
     return saved;
   }
 
-  /**
-   * Resolve client email + send via MailService (email) or log stub (SMS).
-   */
   private async dispatch(
     tenantId: string,
     dto: CreateChaseLogDto,
@@ -84,7 +89,6 @@ export class ChaseLogsService {
         sendVia: meta.via,
       });
     } else {
-      // SMS stub — log for now, integrate SMS provider later
       const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
       this.logger.log(
         `[SMS STUB] To: ${client.name} (${tenant?.firmName ?? tenantId}) | ${dto.subject}`,
@@ -92,9 +96,6 @@ export class ChaseLogsService {
     }
   }
 
-  /**
-   * List all chase logs for a specific client (newest first).
-   */
   async listByClient(tenantId: string, clientId: string): Promise<ChaseLog[]> {
     return this.repo.find({
       where: { tenantId, clientId, deletedAt: IsNull() },
@@ -102,9 +103,6 @@ export class ChaseLogsService {
     });
   }
 
-  /**
-   * Update the status of a chase log (e.g. opened, responded, bounced).
-   */
   async updateStatus(tenantId: string, id: string, status: string): Promise<ChaseLog> {
     const log = await this.repo.findOne({
       where: { id, tenantId, deletedAt: IsNull() },
@@ -115,11 +113,7 @@ export class ChaseLogsService {
   }
 
   /**
-   * Returns a summary map of clientId → { lastChaseAt, chaseCount, lastStatus }
-   * for a given list of client IDs. Used by the chase/clients endpoint.
-   */
-  /**
-   * @param since When set, only counts chases with sentAt >= since (e.g. current quarter start).
+   * Client-level summary (legacy / dashboard). Counts all logs for the client.
    */
   async summaryForClients(
     tenantId: string,
@@ -145,6 +139,48 @@ export class ChaseLogsService {
         lastChaseAt: clientLogs[0]?.sentAt ?? null,
         chaseCount: clientLogs.length,
         lastStatus: clientLogs[0]?.status ?? null,
+      });
+    }
+    return map;
+  }
+
+  /**
+   * Per-business chase summary. Key = clientId::businessId (empty businessId = legacy).
+   */
+  async summaryForBusinesses(
+    tenantId: string,
+    targets: Array<{ clientId: string; businessId?: string | null }>,
+    since?: Date,
+  ): Promise<Map<string, ChaseBusinessSummary>> {
+    if (targets.length === 0) return new Map();
+
+    const clientIds = [...new Set(targets.map((t) => t.clientId))];
+    const logs = await this.repo.find({
+      where: clientIds.map((cid) => ({ tenantId, clientId: cid, deletedAt: IsNull() })),
+      order: { sentAt: 'DESC' },
+    });
+
+    const map = new Map<string, ChaseBusinessSummary>();
+    for (const t of targets) {
+      const bizId = t.businessId ?? null;
+      const key = chaseRowKey(t.clientId, bizId);
+      const matched = logs.filter((l) => {
+        if (l.clientId !== t.clientId) return false;
+        const logBiz = l.businessId ?? null;
+        if (bizId) {
+          if (logBiz !== bizId) return false;
+        } else if (logBiz) {
+          return false;
+        }
+        if (!since) return true;
+        return l.sentAt.getTime() >= since.getTime();
+      });
+      map.set(key, {
+        clientId: t.clientId,
+        businessId: bizId,
+        lastChaseAt: matched[0]?.sentAt ?? null,
+        chaseCount: matched.length,
+        lastStatus: matched[0]?.status ?? null,
       });
     }
     return map;

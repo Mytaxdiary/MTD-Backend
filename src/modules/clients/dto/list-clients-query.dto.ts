@@ -32,4 +32,10 @@ export class ListClientsQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  /** Filter by agent type: all | main | supporting */
+  @ApiPropertyOptional({ example: 'main' })
+  @IsOptional()
+  @IsString()
+  agentType?: string;
 }
