@@ -256,6 +256,60 @@ export class ClientsController {
     );
   }
 
+  /** SA Accounts charge history by transaction ID path (v4.0) */
+  @Get(':id/liabilities/charges/by-transaction/:transactionId')
+  @ApiOperation({ summary: 'Retrieve HMRC SA charge history by transaction ID path' })
+  async getChargeHistoryByTransactionId(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('transactionId') transactionId: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getChargeHistory(
+      tenantId,
+      id,
+      'transaction-id',
+      transactionId,
+      this.fraudContext(req),
+    );
+  }
+
+  /** SA Accounts charge history by charge reference (v4.0) */
+  @Get(':id/liabilities/charges/by-reference/:chargeReference')
+  @ApiOperation({ summary: 'Retrieve HMRC SA charge history by charge reference' })
+  async getChargeHistoryByChargeReference(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('chargeReference') chargeReference: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getChargeHistory(
+      tenantId,
+      id,
+      'charge-reference',
+      chargeReference,
+      this.fraudContext(req),
+    );
+  }
+
+  /** SA Accounts charge history by document / transaction ID (v4.0) */
+  @Get(':id/liabilities/charges/:transactionId')
+  @ApiOperation({ summary: 'Retrieve HMRC SA charge history by document ID' })
+  async getChargeHistoryByDocumentId(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('transactionId') transactionId: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getChargeHistory(
+      tenantId,
+      id,
+      'document-id',
+      transactionId,
+      this.fraudContext(req),
+    );
+  }
+
   /**
    * Aggregate Business Income Source Summary (BISS v3.0) for all businesses.
    * Returns YTD totalIncome, totalExpenses, netProfit, netLoss.

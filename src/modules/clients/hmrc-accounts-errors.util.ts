@@ -41,3 +41,19 @@ export function accountsErrorToUserMessage(httpStatus: number, responseText: str
 
   return parsed?.message ?? 'Failed to retrieve account balance and transactions from HMRC.';
 }
+
+/** Maps HMRC charge-history errors to user-facing messages. */
+export function chargeHistoryErrorToUserMessage(httpStatus: number, responseText: string): string {
+  const parsed = parseHmrcErrorJson(responseText);
+  const code = parsed?.code;
+
+  if (code === 'MATCHING_RESOURCE_NOT_FOUND' || code === 'NOT_FOUND' || httpStatus === 404) {
+    return 'HMRC could not find charge history for this item.';
+  }
+
+  if (code === 'FORMAT_TAX_TRANSACTION_ID' || code === 'FORMAT_CHARGE_REFERENCE') {
+    return 'This charge identifier is not in the format HMRC expects.';
+  }
+
+  return accountsErrorToUserMessage(httpStatus, responseText);
+}

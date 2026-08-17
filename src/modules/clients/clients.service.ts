@@ -42,13 +42,18 @@ import { businessErrorToUserMessage } from './hmrc-business-errors.util';
 import { obligationsErrorToUserMessage } from './hmrc-obligations-errors.util';
 import type {
   BalanceAndTransactionsResponse,
+  ChargeHistoryLookup,
+  ChargeHistoryResponse,
   PaymentsAndAllocationsResponse,
 } from './hmrc-accounts.types';
 import type { GetBalanceAndTransactionsQueryDto } from './dto/get-balance-and-transactions-query.dto';
 import { defaultAccountsDateRange } from './dto/get-balance-and-transactions-query.dto';
 import type { GetPaymentsAndAllocationsQueryDto } from './dto/get-payments-and-allocations-query.dto';
 import { defaultPaymentsDateRange } from './dto/get-payments-and-allocations-query.dto';
-import { accountsErrorToUserMessage } from './hmrc-accounts-errors.util';
+import {
+  accountsErrorToUserMessage,
+  chargeHistoryErrorToUserMessage,
+} from './hmrc-accounts-errors.util';
 import type { BissResponse, IncomeSummaryResponse } from './hmrc-biss.types';
 import type {
   SubmittedFiguresResponse,
@@ -855,12 +860,57 @@ export class ClientsService {
     return { payments: data.payments ?? [] };
   }
 
+  /**
+   * SA Accounts charge history (v4.0 Payments and Liabilities).
+   * document-id  -> GET .../charges/{transactionId}
+   * transaction-id -> GET .../charges/transactionId/{transactionId}
+   * charge-reference -> GET .../charges/chargeReference/{chargeReference}
+   */
+  async getChargeHistory(
+    tenantId: string,
+    clientId: string,
+    lookup: ChargeHistoryLookup,
+    value: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<ChargeHistoryResponse> {
+    const id = value.trim();
+    if (lookup === 'charge-reference') {
+      if (!/^[A-Za-z]{2}[0-9]{12}$/.test(id)) {
+        throw new BadRequestException('Charge reference must be 2 letters followed by 12 digits.');
+      }
+    } else if (!/^[0-9A-Za-z]{1,12}$/.test(id)) {
+      throw new BadRequestException('Charge transaction ID must be 1 to 12 letters or digits.');
+    }
+
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const nino = encodeURIComponent(client.nino);
+    const encoded = encodeURIComponent(id);
+
+    const path =
+      lookup === 'charge-reference'
+        ? `${nino}/charges/chargeReference/${encoded}`
+        : lookup === 'transaction-id'
+          ? `${nino}/charges/transactionId/${encoded}`
+          : `${nino}/charges/${encoded}`;
+
+    const url = `${this.hmrcBaseUrl}/accounts/self-assessment/${path}`;
+    const data = await this.fetchHmrcAccountsJson<ChargeHistoryResponse>(
+      url,
+      accessToken,
+      fraudContext,
+      chargeHistoryErrorToUserMessage,
+    );
+    return { chargeHistoryDetails: data.chargeHistoryDetails ?? [] };
+  }
+
   // ─── Private helpers ──────────────────────────────────────────────────────
 
   private async fetchHmrcAccountsJson<T>(
     url: string,
     accessToken: string,
     fraudContext: HmrcFraudRequestContext | null | undefined,
+    mapError: (status: number, text: string) => string = accountsErrorToUserMessage,
   ): Promise<T> {
     let res: Response;
     try {
@@ -877,7 +927,7 @@ export class ClientsService {
     const text = await res.text();
     if (!res.ok) {
       this.logger.warn(`HMRC SA accounts ${res.status}: ${text}`);
-      throw new BadRequestException(accountsErrorToUserMessage(res.status, text));
+      throw new BadRequestException(mapError(res.status, text));
     }
 
     try {

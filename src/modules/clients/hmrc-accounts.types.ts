@@ -64,3 +64,23 @@ export interface HmrcPayment {
 export interface PaymentsAndAllocationsResponse {
   payments: HmrcPayment[];
 }
+
+/** HMRC SA Accounts v4.0 — charge history (Payments and Liabilities) */
+export interface HmrcChargeHistoryDetail {
+  taxYear?: string;
+  transactionId?: string;
+  transactionDate?: string;
+  description?: string;
+  totalAmount?: number;
+  /** Deprecated by HMRC; prefer changeTimestamp. */
+  changeDate?: string;
+  changeTimestamp?: string;
+  changeReason?: string;
+  poaAdjustmentReason?: string;
+}
+
+export interface ChargeHistoryResponse {
+  chargeHistoryDetails: HmrcChargeHistoryDetail[];
+}
+
+export type ChargeHistoryLookup = 'document-id' | 'transaction-id' | 'charge-reference';
