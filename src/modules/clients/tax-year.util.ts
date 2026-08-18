@@ -39,3 +39,27 @@ export function currentUkTaxYear(): string {
   const endShort = String((startYear + 1) % 100).padStart(2, '0');
   return `${startYear}-${endShort}`;
 }
+
+/** Tax year start (6 Apr) through the latest completed standard quarter end. */
+export function latestCompletedCumulativePeriod(
+  taxYear: string,
+  now = new Date(),
+): { periodStartDate: string; periodEndDate: string } {
+  const startYear = parseInt(taxYear.split('-')[0] ?? '', 10);
+  if (!Number.isFinite(startYear)) {
+    throw new BadRequestException('Invalid tax year for cumulative period dates.');
+  }
+  const periodStartDate = `${startYear}-04-06`;
+  const quarterEnds = [
+    `${startYear}-07-05`,
+    `${startYear}-10-05`,
+    `${startYear + 1}-01-05`,
+    `${startYear + 1}-04-05`,
+  ];
+  const today = now.toISOString().slice(0, 10);
+  let periodEndDate = quarterEnds[0];
+  for (const end of quarterEnds) {
+    if (end <= today) periodEndDate = end;
+  }
+  return { periodStartDate, periodEndDate };
+}

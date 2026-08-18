@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Delete,
   Body,
@@ -36,6 +37,7 @@ import { GetCrystallisationObligationsQueryDto } from './dto/get-crystallisation
 import { GetBalanceAndTransactionsQueryDto } from './dto/get-balance-and-transactions-query.dto';
 import { GetPaymentsAndAllocationsQueryDto } from './dto/get-payments-and-allocations-query.dto';
 import { GetIncomeSummaryQueryDto } from './dto/get-income-summary-query.dto';
+import { CreateSeCumulativeDto } from './dto/create-se-cumulative.dto';
 import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
 
 interface RequestUser {
@@ -174,6 +176,67 @@ export class ClientsController {
   async listBusinesses(@Request() req: ExpressRequest, @Param('id') id: string) {
     const { tenantId } = req.user as RequestUser;
     return this.clientsService.listBusinesses(tenantId, id, this.fraudContext(req));
+  }
+
+  /** UK Property Business figures (cumulative/period + annual) for one income source */
+  @Get(':id/businesses/:businessId/property-figures')
+  @ApiOperation({
+    summary: 'Retrieve HMRC UK property income, expenses, allowances and adjustments',
+  })
+  async getUkPropertyFigures(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('businessId') businessId: string,
+    @Query() query: GetIncomeSummaryQueryDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getUkPropertyFigures(
+      tenantId,
+      id,
+      businessId,
+      query.taxYear,
+      this.fraudContext(req),
+    );
+  }
+
+  /** Retrieve SE cumulative period summary (2025-26+) */
+  @Get(':id/businesses/:businessId/cumulative/:taxYear')
+  @ApiOperation({ summary: 'Retrieve HMRC self-employment cumulative period summary' })
+  async getSeCumulativePeriodSummary(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('businessId') businessId: string,
+    @Param('taxYear') taxYear: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getSeCumulativePeriodSummary(
+      tenantId,
+      id,
+      businessId,
+      taxYear,
+      this.fraudContext(req),
+    );
+  }
+
+  /** Create or amend SE cumulative period summary (2025-26+) */
+  @Put(':id/businesses/:businessId/cumulative/:taxYear')
+  @ApiOperation({ summary: 'Create or amend HMRC self-employment cumulative period summary' })
+  async createOrAmendSeCumulativePeriodSummary(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('businessId') businessId: string,
+    @Param('taxYear') taxYear: string,
+    @Body() dto: CreateSeCumulativeDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.createOrAmendSeCumulativePeriodSummary(
+      tenantId,
+      id,
+      businessId,
+      taxYear,
+      dto,
+      this.fraudContext(req),
+    );
   }
 
   /** Retrieve one business income source from HMRC (Business Details v2.0) */
@@ -468,6 +531,14 @@ export class ClientsController {
   async acceptInvitationSandbox(@Request() req: ExpressRequest, @Param('id') id: string) {
     const { tenantId } = req.user as RequestUser;
     return this.clientsService.acceptInvitationSandbox(tenantId, id, this.fraudContext(req));
+  }
+
+  /** Sandbox only — create a UK property income source via SA Test Support */
+  @Post(':id/sandbox/uk-property-business')
+  @ApiOperation({ summary: 'Create a sandbox UK property test business for a client' })
+  async createUkPropertyTestBusiness(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.createUkPropertyTestBusiness(tenantId, id, this.fraudContext(req));
   }
 
   /** Bulk CSV import — validates all rows first; creates clients + sends invitations only if clean */

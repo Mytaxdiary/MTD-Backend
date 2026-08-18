@@ -32,3 +32,15 @@ export interface SubmittedFiguresResponse {
     netLoss: number;
   }>;
 }
+
+export interface SeCumulativeSummaryResponse {
+  taxYear: string;
+  businessId: string;
+  typeOfBusiness: string;
+  tradingName?: string;
+  source: 'hmrc' | 'sandbox-test' | 'empty';
+  periodDates: { periodStartDate: string; periodEndDate: string } | null;
+  periodIncome: { turnover: number; other: number };
+  periodExpenses: { consolidatedExpenses: number };
+  submittedOn?: string;
+}

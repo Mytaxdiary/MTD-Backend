@@ -56,12 +56,18 @@ import {
 } from './hmrc-accounts-errors.util';
 import type { BissResponse, IncomeSummaryResponse } from './hmrc-biss.types';
 import type {
+  SeCumulativeSummaryResponse,
   SubmittedFiguresResponse,
   SubmittedPeriodFigure,
 } from './hmrc-period-summaries.types';
+import type { UkPropertyAnnualSubmission, UkPropertyFiguresResponse } from './hmrc-property.types';
+import { propertyErrorToUserMessage } from './hmrc-property-errors.util';
+import { testSupportBusinessErrorToUserMessage } from './hmrc-test-support-errors.util';
+import { seCumulativeErrorToUserMessage } from './hmrc-se-errors.util';
+import type { CreateSeCumulativeDto } from './dto/create-se-cumulative.dto';
 import { ClientNote } from './entities/client-note.entity';
 import { currentUkTaxYear } from './dto/get-income-summary-query.dto';
-import { normalizeTaxYear } from './tax-year.util';
+import { latestCompletedCumulativePeriod, normalizeTaxYear } from './tax-year.util';
 import { piiHash } from '../../common/utils/pii-hash.util';
 import { AppNotificationsService } from '../app-notifications/app-notifications.service';
 import { PortalService } from '../client-portal/portal.service';
@@ -501,6 +507,162 @@ export class ClientsService {
     }
 
     return this.checkInvitationStatus(tenantId, clientId, fraudContext);
+  }
+
+  /**
+   * Sandbox only — add a UK property income source on an authorised test client.
+   * POST /individuals/self-assessment-test-support/business/{nino}
+   * HMRC purges test businesses after 7 days. Does not convert an existing SE business.
+   */
+  async createUkPropertyTestBusiness(
+    tenantId: string,
+    clientId: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<BusinessListResponse> {
+    this.assertSandboxEnvironment();
+
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const connection = await this.hmrcService.getStatus(tenantId);
+    if (!connection?.scope?.includes('write:self-assessment')) {
+      throw new BadRequestException(
+        'Reconnect HMRC after adding write:self-assessment to HMRC_SCOPE and Developer Hub. ' +
+          'That scope is required to create a sandbox UK property business.',
+      );
+    }
+
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    let listed = await this.listBusinessesLite(client.nino, accessToken, fraudContext);
+
+    if (!listed.some((b) => this.isUkPropertyType(b.typeOfBusiness))) {
+      const propertyId = await this.createSandboxTestBusiness(
+        client.nino,
+        accessToken,
+        fraudContext,
+        {
+          typeOfBusiness: 'uk-property',
+          commencementDate: '2024-04-06',
+          accountingType: 'CASH',
+          firstAccountingPeriodStartDate: '2024-04-06',
+          firstAccountingPeriodEndDate: '2025-04-05',
+        },
+        clientId,
+      );
+      if (propertyId) {
+        listed = [...listed, { typeOfBusiness: 'uk-property', businessId: propertyId }];
+      }
+    }
+
+    if (!listed.some((b) => b.typeOfBusiness === 'self-employment')) {
+      const seId = await this.createSandboxTestBusiness(
+        client.nino,
+        accessToken,
+        fraudContext,
+        {
+          typeOfBusiness: 'self-employment',
+          tradingType: 'Plastering',
+          tradingName: 'Company X',
+          commencementDate: '2024-04-06',
+          accountingType: 'CASH',
+          firstAccountingPeriodStartDate: '2024-04-06',
+          firstAccountingPeriodEndDate: '2025-04-05',
+          businessAddressLineOne: '1 High Street',
+          businessAddressPostcode: 'SW1A 1AA',
+          businessAddressCountryCode: 'GB',
+        },
+        clientId,
+      );
+      if (seId) {
+        listed = [
+          ...listed,
+          { typeOfBusiness: 'self-employment', businessId: seId, tradingName: 'Company X' },
+        ];
+      }
+    }
+
+    const refreshed = await this.listBusinesses(tenantId, clientId, fraudContext);
+    const merged = [...refreshed.listOfBusinesses];
+    for (const extra of listed) {
+      if (!merged.some((b) => b.businessId === extra.businessId)) {
+        merged.push(extra);
+      }
+    }
+    if (!merged.some((b) => this.isUkPropertyType(b.typeOfBusiness))) {
+      throw new BadRequestException(
+        'HMRC did not return a UK property income source after create. Check Self Assessment Test Support subscription and reconnect HMRC.',
+      );
+    }
+    return { listOfBusinesses: merged };
+  }
+
+  private async createSandboxTestBusiness(
+    nino: string,
+    accessToken: string,
+    fraudContext: HmrcFraudRequestContext | null | undefined,
+    body: Record<string, unknown>,
+    clientId: string,
+  ): Promise<string | undefined> {
+    const url =
+      `${this.hmrcBaseUrl}/individuals/self-assessment-test-support/business/` +
+      encodeURIComponent(nino);
+
+    try {
+      const res = await this.hmrcApiClient.fetch(url, {
+        method: 'POST',
+        accessToken,
+        fraudContext,
+        headers: {
+          Accept: 'application/vnd.hmrc.1.0+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      const text = await res.text();
+      this.logger.log(
+        `Create ${String(body.typeOfBusiness)} test business HMRC ${res.status} for ${clientId}: ${text || '(empty)'}`,
+      );
+
+      if (!res.ok) {
+        const alreadyAdded =
+          text.includes('RULE_PROPERTY_BUSINESS_ADDED') ||
+          testSupportBusinessErrorToUserMessage(res.status, text).includes('already has');
+        if (alreadyAdded) return undefined;
+        throw new BadRequestException(testSupportBusinessErrorToUserMessage(res.status, text));
+      }
+
+      const parsed = text ? (JSON.parse(text) as { businessId?: string }) : {};
+      if (!parsed.businessId) {
+        throw new BadRequestException(
+          `HMRC accepted the ${String(body.typeOfBusiness)} create call but did not return a businessId.`,
+        );
+      }
+      return parsed.businessId;
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      this.logger.error(
+        `Create ${String(body.typeOfBusiness)} test business failed for ${clientId}`,
+        err,
+      );
+      throw new InternalServerErrorException(
+        `Failed to create sandbox ${String(body.typeOfBusiness)} business.`,
+      );
+    }
+  }
+
+  private isHmrcSandbox(): boolean {
+    return (this.hmrcBaseUrl ?? '').includes('test-api');
+  }
+
+  /** Sandbox only — without this, Business Details list always returns the default Company X stub. */
+  private sandboxStatefulHeaders(): Record<string, string> {
+    return this.isHmrcSandbox() ? { 'Gov-Test-Scenario': 'STATEFUL' } : {};
+  }
+
+  private assertSandboxEnvironment(): void {
+    if (!this.isHmrcSandbox()) {
+      throw new BadRequestException(
+        'UK property test businesses can only be created in the HMRC sandbox.',
+      );
+    }
   }
 
   async findOne(tenantId: string, id: string): Promise<Client> {
@@ -958,6 +1120,9 @@ export class ClientsService {
 
     const text = await res.text();
     if (!res.ok) {
+      if (this.isHmrcSandbox() && res.status === 404) {
+        return { obligations: [] } as T;
+      }
       this.logger.warn(`HMRC obligations ${res.status}: ${text}`);
       throw new BadRequestException(obligationsErrorToUserMessage(res.status, text));
     }
@@ -980,7 +1145,10 @@ export class ClientsService {
       res = await this.hmrcApiClient.fetch(url, {
         accessToken,
         fraudContext,
-        headers: { Accept: 'application/vnd.hmrc.2.0+json' },
+        headers: {
+          Accept: 'application/vnd.hmrc.2.0+json',
+          ...this.sandboxStatefulHeaders(),
+        },
       });
     } catch (err) {
       this.logger.error(`HMRC business details network error: ${url}`, err);
@@ -989,6 +1157,9 @@ export class ClientsService {
 
     const text = await res.text();
     if (!res.ok) {
+      if (this.isHmrcSandbox() && res.status === 404 && url.includes('/list')) {
+        return { listOfBusinesses: [] } as T;
+      }
       this.logger.warn(`HMRC business details ${res.status}: ${text}`);
       throw new BadRequestException(errorMapper(res.status, text));
     }
@@ -1535,7 +1706,10 @@ export class ClientsService {
           res = await this.hmrcApiClient.fetch(url, {
             accessToken,
             fraudContext,
-            headers: { Accept: 'application/vnd.hmrc.3.0+json' },
+            headers: {
+              Accept: 'application/vnd.hmrc.3.0+json',
+              ...this.sandboxStatefulHeaders(),
+            },
           });
         } catch (err) {
           this.logger.warn(`BISS network error for business ${biz.businessId}`, err);
@@ -1686,6 +1860,330 @@ export class ClientsService {
       periods,
       businesses: summary.businesses,
     };
+  }
+
+  /**
+   * UK Property Business (MTD) retrieve for one income source:
+   * cumulative / period summaries + annual allowances and adjustments.
+   */
+  async getUkPropertyFigures(
+    tenantId: string,
+    clientId: string,
+    businessId: string,
+    taxYear?: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<UkPropertyFiguresResponse> {
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const resolvedTaxYear = taxYear ?? currentUkTaxYear();
+    const businesses = await this.listBusinessesLite(client.nino, accessToken, fraudContext);
+    const biz = businesses.find((b) => b.businessId === businessId);
+    if (!biz || !this.isUkPropertyType(biz.typeOfBusiness)) {
+      throw new BadRequestException('This HMRC business is not a UK property income source.');
+    }
+
+    const useCumulative = this.taxYearStartYear(resolvedTaxYear) >= 2025;
+    let periods: SubmittedPeriodFigure[] = [];
+    let fromDate: string | undefined;
+    let toDate: string | undefined;
+    let submittedOn: string | undefined;
+
+    if (useCumulative) {
+      const path = this.cumulativePathForBusiness(
+        client.nino,
+        biz.businessId,
+        biz.typeOfBusiness,
+        resolvedTaxYear,
+      );
+      const data = path
+        ? await this.fetchHmrcPropertyOptionalJson<Record<string, unknown>>(
+            `${this.hmrcBaseUrl}${path}`,
+            accessToken,
+            fraudContext,
+          )
+        : null;
+      if (data) {
+        const { income, expenses } = this.extractIncomeExpenses(data, biz.typeOfBusiness);
+        fromDate = typeof data.fromDate === 'string' ? data.fromDate : undefined;
+        toDate = typeof data.toDate === 'string' ? data.toDate : undefined;
+        submittedOn = typeof data.submittedOn === 'string' ? data.submittedOn : undefined;
+        periods = [
+          {
+            label: 'YTD cumulative',
+            periodId: `${resolvedTaxYear}-cumulative`,
+            periodStartDate: fromDate,
+            periodEndDate: toDate,
+            businessId: biz.businessId,
+            typeOfBusiness: biz.typeOfBusiness,
+            tradingName: biz.tradingName,
+            income,
+            expenses,
+            net: income - expenses,
+            cumulative: true,
+          },
+        ];
+      }
+    } else {
+      periods = await this.fetchLegacyPeriods(
+        client.nino,
+        biz,
+        resolvedTaxYear,
+        accessToken,
+        fraudContext,
+      );
+    }
+
+    const ytd = periods.reduce(
+      (acc, p) => ({
+        income: acc.income + p.income,
+        expenses: acc.expenses + p.expenses,
+      }),
+      { income: 0, expenses: 0 },
+    );
+    const annual = await this.fetchUkPropertyAnnual(
+      client.nino,
+      biz.businessId,
+      resolvedTaxYear,
+      accessToken,
+      fraudContext,
+    );
+
+    return {
+      taxYear: resolvedTaxYear,
+      businessId: biz.businessId,
+      typeOfBusiness: biz.typeOfBusiness,
+      tradingName: biz.tradingName,
+      fromDate: fromDate ?? periods[0]?.periodStartDate,
+      toDate: toDate ?? periods[0]?.periodEndDate,
+      submittedOn: submittedOn ?? annual?.submittedOn,
+      income: ytd.income,
+      expenses: ytd.expenses,
+      net: ytd.income - ytd.expenses,
+      periods,
+      annual,
+    };
+  }
+
+  /**
+   * Retrieve SE cumulative period summary (2025-26+).
+   * Sandbox with no HMRC data returns suggested test figures (not yet submitted).
+   */
+  async getSeCumulativePeriodSummary(
+    tenantId: string,
+    clientId: string,
+    businessId: string,
+    taxYear?: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<SeCumulativeSummaryResponse> {
+    const { client, biz, resolvedTaxYear, accessToken } = await this.assertSeCumulativeContext(
+      tenantId,
+      clientId,
+      businessId,
+      taxYear,
+      fraudContext,
+    );
+
+    const path = this.cumulativePathForBusiness(
+      client.nino,
+      biz.businessId,
+      biz.typeOfBusiness,
+      resolvedTaxYear,
+    );
+    const data = path
+      ? await this.fetchHmrcOptionalJson<Record<string, unknown>>(
+          `${this.hmrcBaseUrl}${path}`,
+          accessToken,
+          fraudContext,
+          'application/vnd.hmrc.5.0+json',
+        )
+      : null;
+
+    if (data) {
+      const periodDates = (data.periodDates ?? {}) as {
+        periodStartDate?: string;
+        periodEndDate?: string;
+      };
+      const periodIncome = (data.periodIncome ?? {}) as {
+        turnover?: number;
+        other?: number;
+      };
+      const { income, expenses } = this.extractIncomeExpenses(data, 'self-employment');
+      return {
+        taxYear: resolvedTaxYear,
+        businessId: biz.businessId,
+        typeOfBusiness: biz.typeOfBusiness,
+        tradingName: biz.tradingName,
+        source: 'hmrc',
+        periodDates:
+          periodDates.periodStartDate && periodDates.periodEndDate
+            ? {
+                periodStartDate: periodDates.periodStartDate,
+                periodEndDate: periodDates.periodEndDate,
+              }
+            : latestCompletedCumulativePeriod(resolvedTaxYear),
+        periodIncome: {
+          turnover: this.sanitizeHmrcAmount(periodIncome.turnover) ?? income,
+          other: this.sanitizeHmrcAmount(periodIncome.other) ?? 0,
+        },
+        periodExpenses: { consolidatedExpenses: expenses },
+        submittedOn: typeof data.submittedOn === 'string' ? data.submittedOn : undefined,
+      };
+    }
+
+    const periodDates = latestCompletedCumulativePeriod(resolvedTaxYear);
+    if (this.isHmrcSandbox()) {
+      return {
+        taxYear: resolvedTaxYear,
+        businessId: biz.businessId,
+        typeOfBusiness: biz.typeOfBusiness,
+        tradingName: biz.tradingName,
+        source: 'sandbox-test',
+        periodDates,
+        periodIncome: { turnover: 100, other: 0 },
+        periodExpenses: { consolidatedExpenses: 25 },
+      };
+    }
+
+    return {
+      taxYear: resolvedTaxYear,
+      businessId: biz.businessId,
+      typeOfBusiness: biz.typeOfBusiness,
+      tradingName: biz.tradingName,
+      source: 'empty',
+      periodDates,
+      periodIncome: { turnover: 0, other: 0 },
+      periodExpenses: { consolidatedExpenses: 0 },
+    };
+  }
+
+  /**
+   * Create or amend SE cumulative period summary (2025-26+).
+   * PUT /individuals/business/self-employment/{nino}/{businessId}/cumulative/{taxYear}
+   */
+  async createOrAmendSeCumulativePeriodSummary(
+    tenantId: string,
+    clientId: string,
+    businessId: string,
+    taxYear: string,
+    dto: CreateSeCumulativeDto,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<SeCumulativeSummaryResponse> {
+    const { client, biz, resolvedTaxYear, accessToken } = await this.assertSeCumulativeContext(
+      tenantId,
+      clientId,
+      businessId,
+      taxYear,
+      fraudContext,
+    );
+
+    const connection = await this.hmrcService.getStatus(tenantId);
+    if (!connection?.scope?.includes('write:self-assessment')) {
+      throw new BadRequestException(
+        'Reconnect HMRC after adding write:self-assessment. That scope is required to submit cumulative figures.',
+      );
+    }
+
+    if (this.taxYearStartYear(resolvedTaxYear) < 2025) {
+      throw new BadRequestException(
+        'Self-employment cumulative submit is only available for tax year 2025-26 or later.',
+      );
+    }
+
+    const path = this.cumulativePathForBusiness(
+      client.nino,
+      biz.businessId,
+      biz.typeOfBusiness,
+      resolvedTaxYear,
+    );
+    if (!path) {
+      throw new BadRequestException('This HMRC business is not a self-employment income source.');
+    }
+
+    const body = {
+      periodDates: {
+        periodStartDate: dto.periodDates.periodStartDate,
+        periodEndDate: dto.periodDates.periodEndDate,
+      },
+      periodIncome: {
+        turnover: dto.periodIncome.turnover,
+        other: dto.periodIncome.other,
+      },
+      periodExpenses: {
+        consolidatedExpenses: dto.periodExpenses.consolidatedExpenses,
+      },
+    };
+
+    let res: Response;
+    try {
+      res = await this.hmrcApiClient.fetch(`${this.hmrcBaseUrl}${path}`, {
+        method: 'PUT',
+        accessToken,
+        fraudContext,
+        headers: {
+          Accept: 'application/vnd.hmrc.5.0+json',
+          'Content-Type': 'application/json',
+          ...this.sandboxStatefulHeaders(),
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      this.logger.error(`SE cumulative PUT network error for ${clientId}`, err);
+      throw new InternalServerErrorException('Failed to contact HMRC for self-employment submit.');
+    }
+
+    const text = await res.text();
+    if (!res.ok) {
+      this.logger.warn(`SE cumulative PUT ${res.status} for ${clientId}: ${text}`);
+      throw new BadRequestException(seCumulativeErrorToUserMessage(res.status, text));
+    }
+
+    return this.getSeCumulativePeriodSummary(
+      tenantId,
+      clientId,
+      businessId,
+      resolvedTaxYear,
+      fraudContext,
+    );
+  }
+
+  private async assertSeCumulativeContext(
+    tenantId: string,
+    clientId: string,
+    businessId: string,
+    taxYear: string | undefined,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ) {
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const resolvedTaxYear = normalizeTaxYear(taxYear ?? currentUkTaxYear());
+    const businesses = await this.listBusinessesLite(client.nino, accessToken, fraudContext);
+    const biz = businesses.find((b) => b.businessId === businessId);
+    if (!biz || biz.typeOfBusiness !== 'self-employment') {
+      throw new BadRequestException('This HMRC business is not a self-employment income source.');
+    }
+    return { client, biz, resolvedTaxYear, accessToken };
+  }
+
+  private isUkPropertyType(typeOfBusiness: string): boolean {
+    return typeOfBusiness === 'uk-property' || typeOfBusiness.startsWith('uk-property');
+  }
+
+  private async fetchUkPropertyAnnual(
+    nino: string,
+    businessId: string,
+    taxYear: string,
+    accessToken: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<UkPropertyAnnualSubmission | null> {
+    const url =
+      `${this.hmrcBaseUrl}/individuals/business/property/uk/` +
+      `${encodeURIComponent(nino)}/${encodeURIComponent(businessId)}/annual/` +
+      `${encodeURIComponent(taxYear)}`;
+    return this.fetchHmrcPropertyOptionalJson<UkPropertyAnnualSubmission>(
+      url,
+      accessToken,
+      fraudContext,
+    );
   }
 
   private taxYearStartYear(taxYear: string): number {
@@ -1900,16 +2398,44 @@ export class ClientsService {
       return { income, expenses: this.sumExpenseFields(periodExpenses) };
     }
 
-    // UK / foreign property shapes vary — try common nests
     const uk = (data.ukProperty ?? data.ukFhlProperty ?? data.ukNonFhlProperty ?? data) as Record<
       string,
       unknown
     >;
-    const incomeObj = (uk.income ?? data.income ?? {}) as Record<string, number | undefined>;
-    const expensesObj = (uk.expenses ?? data.expenses ?? {}) as Record<string, number | undefined>;
-    const income = this.sumNumericFields(incomeObj);
-    const expenses = this.sumExpenseFields(expensesObj);
-    return { income, expenses };
+    const incomeObj = (uk.income ?? data.income ?? {}) as Record<string, unknown>;
+    const expensesObj = (uk.expenses ?? data.expenses ?? {}) as Record<string, unknown>;
+    return {
+      income: this.sumPropertyIncome(incomeObj),
+      expenses: this.sumPropertyExpenses(expensesObj),
+    };
+  }
+
+  private sumPropertyIncome(income: Record<string, unknown>): number {
+    const rentARoom = (income.rentARoom ?? {}) as Record<string, unknown>;
+    return (
+      (this.sanitizeHmrcAmount(this.asNumber(income.periodAmount)) ?? 0) +
+      (this.sanitizeHmrcAmount(this.asNumber(income.premiumsOfLeaseGrant)) ?? 0) +
+      (this.sanitizeHmrcAmount(this.asNumber(income.reversePremiums)) ?? 0) +
+      (this.sanitizeHmrcAmount(this.asNumber(income.otherIncome)) ?? 0) +
+      (this.sanitizeHmrcAmount(this.asNumber(rentARoom.rentsReceived)) ?? 0)
+    );
+  }
+
+  private sumPropertyExpenses(expenses: Record<string, unknown>): number {
+    const consolidated = this.sanitizeHmrcAmount(this.asNumber(expenses.consolidatedExpenses));
+    if (consolidated != null) return consolidated;
+    const rentARoom = (expenses.rentARoom ?? {}) as Record<string, unknown>;
+    const rest = { ...expenses };
+    delete rest.consolidatedExpenses;
+    delete rest.rentARoom;
+    return (
+      this.sumNumericFields(rest as Record<string, number | undefined>) +
+      (this.sanitizeHmrcAmount(this.asNumber(rentARoom.amountClaimed)) ?? 0)
+    );
+  }
+
+  private asNumber(value: unknown): number | undefined {
+    return typeof value === 'number' ? value : undefined;
   }
 
   /** HMRC sandbox often returns ±99999999999.99 as a placeholder — treat as missing. */
@@ -1958,7 +2484,10 @@ export class ClientsService {
       res = await this.hmrcApiClient.fetch(url, {
         accessToken,
         fraudContext,
-        headers: { Accept: accept },
+        headers: {
+          Accept: accept,
+          ...this.sandboxStatefulHeaders(),
+        },
       });
     } catch (err) {
       this.logger.warn(`HMRC optional fetch network error: ${url}`, err);
@@ -1976,6 +2505,44 @@ export class ClientsService {
       return JSON.parse(text) as T;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Property Business GET: 404 = no data yet; 403/other errors are raised so the UI
+   * can tell the agent to subscribe the API.
+   */
+  private async fetchHmrcPropertyOptionalJson<T>(
+    url: string,
+    accessToken: string,
+    fraudContext: HmrcFraudRequestContext | null | undefined,
+  ): Promise<T | null> {
+    let res: Response;
+    try {
+      res = await this.hmrcApiClient.fetch(url, {
+        accessToken,
+        fraudContext,
+        headers: {
+          Accept: 'application/vnd.hmrc.6.0+json',
+          ...this.sandboxStatefulHeaders(),
+        },
+      });
+    } catch (err) {
+      this.logger.error(`HMRC Property Business network error: ${url}`, err);
+      throw new InternalServerErrorException('Failed to contact HMRC for UK property figures.');
+    }
+
+    if (res.status === 404) return null;
+    const text = await res.text();
+    if (!res.ok) {
+      this.logger.warn(`HMRC Property Business ${res.status}: ${text}`);
+      throw new BadRequestException(propertyErrorToUserMessage(res.status, text));
+    }
+    if (!text) return null;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new InternalServerErrorException('HMRC returned invalid JSON for UK property figures.');
     }
   }
 

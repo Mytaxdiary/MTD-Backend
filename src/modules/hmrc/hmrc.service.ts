@@ -288,6 +288,7 @@ export class HmrcService {
         `After connecting, save ARN ${agent.agentServicesAccountNumber} in the ARN field.`,
         `Add a client with NINO ${individual.nino} and postcode ${individual.postcode}.`,
         'Send an HMRC invitation from the client record, then accept it under Sandbox invitations.',
+        'After authorisation, open the client and use HMRC businesses → Add UK property (sandbox). Test users are not created with a property income source.',
       ],
     };
   }
