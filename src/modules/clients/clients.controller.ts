@@ -38,6 +38,7 @@ import { GetBalanceAndTransactionsQueryDto } from './dto/get-balance-and-transac
 import { GetPaymentsAndAllocationsQueryDto } from './dto/get-payments-and-allocations-query.dto';
 import { GetIncomeSummaryQueryDto } from './dto/get-income-summary-query.dto';
 import { CreateSeCumulativeDto } from './dto/create-se-cumulative.dto';
+import { CreateUkPropertyCumulativeDto } from './dto/create-uk-property-cumulative.dto';
 import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
 
 interface RequestUser {
@@ -195,6 +196,46 @@ export class ClientsController {
       id,
       businessId,
       query.taxYear,
+      this.fraudContext(req),
+    );
+  }
+
+  /** Retrieve UK property cumulative period summary (2025-26+) */
+  @Get(':id/businesses/:businessId/property-cumulative/:taxYear')
+  @ApiOperation({ summary: 'Retrieve HMRC UK property cumulative period summary' })
+  async getUkPropertyCumulativePeriodSummary(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('businessId') businessId: string,
+    @Param('taxYear') taxYear: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getUkPropertyCumulativePeriodSummary(
+      tenantId,
+      id,
+      businessId,
+      taxYear,
+      this.fraudContext(req),
+    );
+  }
+
+  /** Create or amend UK property cumulative period summary (2025-26+) */
+  @Put(':id/businesses/:businessId/property-cumulative/:taxYear')
+  @ApiOperation({ summary: 'Create or amend HMRC UK property cumulative period summary' })
+  async createOrAmendUkPropertyCumulativePeriodSummary(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('businessId') businessId: string,
+    @Param('taxYear') taxYear: string,
+    @Body() dto: CreateUkPropertyCumulativeDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.createOrAmendUkPropertyCumulativePeriodSummary(
+      tenantId,
+      id,
+      businessId,
+      taxYear,
+      dto,
       this.fraudContext(req),
     );
   }

@@ -32,6 +32,9 @@ export const envValidationSchema = Joi.object({
   MAIL_FROM: Joi.string().email().optional(),
   MAIL_FROM_NAME: Joi.string().optional(),
 
+  // Auto-chase cron (emails clients daily at 08:00 UTC). Opt-in.
+  CHASE_CRON_ENABLED: Joi.string().valid('true', 'false').default('false'),
+
   // HMRC OAuth (optional — app works without it, HMRC section just shows not-configured state)
   HMRC_BASE_URL: Joi.string().uri().optional(),
   HMRC_AUTH_BASE_URL: Joi.string().uri().optional(),

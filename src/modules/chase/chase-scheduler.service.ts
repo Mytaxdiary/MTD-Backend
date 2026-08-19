@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -31,7 +32,16 @@ export class ChaseSchedulerService {
     private readonly chaseService: ChaseService,
     private readonly chaseLogsService: ChaseLogsService,
     private readonly chaseTemplatesService: ChaseTemplatesService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    if (!this.isChaseCronEnabled()) {
+      this.logger.log('Auto-chase cron is disabled (set CHASE_CRON_ENABLED=true to run)');
+    }
+  }
+
+  private isChaseCronEnabled(): boolean {
+    return this.configService.get<string>('CHASE_CRON_ENABLED') === 'true';
+  }
 
   /**
    * Runs every day at 08:00 UTC.
@@ -45,6 +55,11 @@ export class ChaseSchedulerService {
    */
   @Cron(CronExpression.EVERY_DAY_AT_8AM)
   async runDailyChase(): Promise<void> {
+    if (!this.isChaseCronEnabled()) {
+      this.logger.log('Auto-chase scheduler skipped (CHASE_CRON_ENABLED is not true)');
+      return;
+    }
+
     this.logger.log('Auto-chase scheduler started');
 
     const tenants = await this.tenantRepo.find();

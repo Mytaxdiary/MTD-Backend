@@ -14,6 +14,18 @@ export interface UkPropertyAnnualSubmission {
   ukNonFhlProperty?: UkPropertyMoneyBlock;
 }
 
+export interface UkPropertyCumulativeSummaryResponse {
+  taxYear: string;
+  businessId: string;
+  typeOfBusiness: string;
+  tradingName?: string;
+  source: 'hmrc' | 'sandbox-test' | 'empty';
+  periodDates: { periodStartDate: string; periodEndDate: string } | null;
+  periodAmount: number;
+  consolidatedExpenses: number;
+  submittedOn?: string;
+}
+
 export interface UkPropertyFiguresResponse {
   taxYear: string;
   businessId: string;
