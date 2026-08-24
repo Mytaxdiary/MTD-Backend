@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { Client } from '../clients/entities/client.entity';
 import { ClientsService } from '../clients/clients.service';
 import { ClientPipelineService } from '../clients/client-pipeline.service';
+import { staffClientWhere } from '../clients/staff-client-scope.util';
+import type { RequestUser } from '../auth/strategies/jwt.strategy';
 import { ChaseLogsService } from '../chase-logs/chase-logs.service';
 import { currentChaseQuarter, type QuarterInfo } from '../chase/chase-template-vars.util';
 import {
@@ -134,9 +136,10 @@ export class DashboardService {
     private readonly clientPipelineService: ClientPipelineService,
   ) {}
 
-  async getSummary(tenantId: string): Promise<DashboardSummary> {
+  async getSummary(tenantId: string, actor?: RequestUser | null): Promise<DashboardSummary> {
+    const where = staffClientWhere(tenantId, actor);
     const clients = await this.clientRepo.find({
-      where: { tenantId },
+      where,
       order: { createdAt: 'ASC' },
     });
 
@@ -165,7 +168,7 @@ export class DashboardService {
       await this.clientPipelineService.markSubmittedMany(tenantId, [...submittedIds]);
       // Reload so persisted submitted status is reflected in resolvePipelineStatus.
       const refreshed = await this.clientRepo.find({
-        where: { tenantId },
+        where,
         order: { createdAt: 'ASC' },
       });
       clients.splice(0, clients.length, ...refreshed);

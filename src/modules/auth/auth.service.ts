@@ -22,8 +22,20 @@ import { LoginDto } from './dto/login.dto';
 import { hashPassword, comparePassword } from '../../common/helpers/crypto.helper';
 import { encrypt, decrypt, isEncrypted } from '../hmrc/crypto.util';
 import { User } from '../users/entities/user.entity';
-import type { AuthResponse, SessionResponse, TokensResponse } from './types/auth-response.type';
+import type {
+  AuthResponse,
+  AuthUserResponse,
+  SessionResponse,
+  TokensResponse,
+} from './types/auth-response.type';
 import type { JwtPayload } from './strategies/jwt.strategy';
+import {
+  OWNER_PERMISSIONS,
+  normalizePermissions,
+  resolveFirmRole,
+  type FirmRole,
+  type StaffPermissions,
+} from '../users/permissions';
 
 const RESET_TOKEN_EXPIRY_HOURS = 1;
 const VERIFY_TOKEN_EXPIRY_HOURS = 24;
@@ -55,7 +67,7 @@ export class AuthService {
     }
 
     const passwordHash = await hashPassword(dto.password);
-    const role = await this.usersService.findOrCreateAgentRole();
+    const role = await this.usersService.findOrCreateOwnerRole();
 
     // Each registration creates a new tenant (accounting firm)
     // Pre-fill contact info from the registering user so Firm Details isn't blank
@@ -72,6 +84,7 @@ export class AuthService {
       passwordHash,
       role,
       tenantId: tenant.id,
+      permissions: OWNER_PERMISSIONS,
     });
 
     const tokens = await this.issueTokens(user.id, user.email, tenant.id, false);
@@ -90,15 +103,7 @@ export class AuthService {
 
     return {
       ...tokens,
-      user: {
-        id: user.id,
-        name: `${user.firstName} ${user.lastName}`,
-        email: user.email,
-        firmName: user.firmName,
-        isEmailVerified: user.isEmailVerified,
-        mfaEnabled: false,
-        tenantId: tenant.id,
-      },
+      user: this.toAuthUser(user),
     };
   }
 
@@ -137,15 +142,7 @@ export class AuthService {
         accessTokenExpiresAt: '',
         requiresMfa: true,
         mfaToken,
-        user: {
-          id: user.id,
-          name: `${user.firstName} ${user.lastName}`,
-          email: user.email,
-          firmName: user.firmName,
-          isEmailVerified: user.isEmailVerified,
-          mfaEnabled: true,
-          tenantId: user.tenantId ?? null,
-        },
+        user: this.toAuthUser(user),
       };
     }
 
@@ -153,15 +150,7 @@ export class AuthService {
 
     return {
       ...tokens,
-      user: {
-        id: user.id,
-        name: `${user.firstName} ${user.lastName}`,
-        email: user.email,
-        firmName: user.firmName,
-        isEmailVerified: user.isEmailVerified,
-        mfaEnabled: user.mfaEnabled,
-        tenantId: user.tenantId ?? null,
-      },
+      user: this.toAuthUser(user),
     };
   }
 
@@ -278,15 +267,7 @@ export class AuthService {
 
     return {
       ...tokens,
-      user: {
-        id: user.id,
-        name: `${user.firstName} ${user.lastName}`,
-        email: user.email,
-        firmName: user.firmName,
-        isEmailVerified: user.isEmailVerified,
-        mfaEnabled: true,
-        tenantId: user.tenantId ?? null,
-      },
+      user: this.toAuthUser(user),
     };
   }
 
@@ -359,15 +340,7 @@ export class AuthService {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException();
 
-    return {
-      id: user.id,
-      name: `${user.firstName} ${user.lastName}`,
-      email: user.email,
-      firmName: user.firmName,
-      isEmailVerified: user.isEmailVerified,
-      mfaEnabled: user.mfaEnabled,
-      tenantId: user.tenantId ?? null,
-    };
+    return this.toAuthUser(user);
   }
 
   // ── Refresh tokens ───────────────────────────────────────────────────────
@@ -514,13 +487,55 @@ export class AuthService {
 
   // ── Private helpers ──────────────────────────────────────────────────────
 
+  async issueSession(user: User, mfaAuthenticated = false): Promise<AuthResponse> {
+    const tokens = await this.issueTokens(
+      user.id,
+      user.email,
+      user.tenantId ?? '',
+      mfaAuthenticated,
+    );
+    return { ...tokens, user: this.toAuthUser(user) };
+  }
+
+  private toAuthUser(user: User): AuthUserResponse {
+    const role = resolveFirmRole(user.role?.name);
+    return {
+      id: user.id,
+      name: `${user.firstName} ${user.lastName}`,
+      email: user.email,
+      firmName: user.firmName,
+      isEmailVerified: user.isEmailVerified,
+      mfaEnabled: user.mfaEnabled,
+      tenantId: user.tenantId ?? null,
+      role,
+      permissions: normalizePermissions(user.permissions, role),
+    };
+  }
+
+  private async roleAndPermissions(userId: string): Promise<{
+    role: FirmRole;
+    permissions: StaffPermissions;
+  }> {
+    const user = await this.usersService.findById(userId);
+    const role = resolveFirmRole(user?.role?.name);
+    return { role, permissions: normalizePermissions(user?.permissions, role) };
+  }
+
   private async issueTokens(
     userId: string,
     email: string,
     tenantId: string,
     mfaAuthenticated = false,
   ): Promise<TokensResponse> {
-    const payload: JwtPayload = { sub: userId, email, tenantId, mfaAuthenticated };
+    const { role, permissions } = await this.roleAndPermissions(userId);
+    const payload: JwtPayload = {
+      sub: userId,
+      email,
+      tenantId,
+      mfaAuthenticated,
+      role,
+      permissions,
+    };
     const jwtExpiresIn = this.configService.get<string>('auth.jwtExpiresIn');
     const accessToken = this.jwtService.sign(payload, {
       expiresIn: jwtExpiresIn as `${number}${'s' | 'm' | 'h' | 'd'}`,

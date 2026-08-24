@@ -20,6 +20,8 @@ import {
   ApiCreatedResponse,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequireOwner } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../auth/strategies/jwt.strategy';
 import { AccountService } from './account.service';
 import { ExportRequestDto } from './dto/export-request.dto';
@@ -31,7 +33,8 @@ interface AuthRequest extends ExpressRequest {
 
 @ApiTags('Account')
 @Controller('account')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@RequireOwner()
 @ApiBearerAuth()
 export class AccountController {
   constructor(private readonly accountService: AccountService) {}

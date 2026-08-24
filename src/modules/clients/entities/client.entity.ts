@@ -1,6 +1,7 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../../database/base.entity';
 import { Tenant } from '../../tenants/entities/tenant.entity';
+import { User } from '../../users/entities/user.entity';
 import { piiTransformer } from '../../../common/transformers/pii-column.transformer';
 
 /** HMRC invitation status — any value returned by the API (not a fixed enum). */
@@ -116,4 +117,12 @@ export class Client extends BaseEntity {
    */
   @Column({ name: 'workflow_type', type: 'varchar', length: 20, nullable: true, default: null })
   workflowType?: string;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'assigned_to_user_id' })
+  assignedTo?: User | null;
+
+  /** Staff member this client is assigned to. Null = unassigned (owner-only). */
+  @Column({ name: 'assigned_to_user_id', type: 'varchar', length: 36, nullable: true })
+  assignedToUserId?: string | null;
 }

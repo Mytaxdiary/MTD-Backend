@@ -5,6 +5,8 @@ import { Client } from '../clients/entities/client.entity';
 import { ClientsService } from '../clients/clients.service';
 import { ChaseLogsService, chasePeriodRowKey } from '../chase-logs/chase-logs.service';
 import type { ListChaseClientsQueryDto } from './dto/list-chase-clients-query.dto';
+import type { RequestUser } from '../auth/strategies/jwt.strategy';
+import { staffClientWhere } from '../clients/staff-client-scope.util';
 import {
   chaseGreetingName,
   currentChaseQuarter,
@@ -89,6 +91,7 @@ export class ChaseService {
   async listNeedsChasing(
     tenantId: string,
     query: ListChaseClientsQueryDto = {},
+    actor?: RequestUser | null,
   ): Promise<ChaseClientsPage> {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(50, Math.max(1, Number(query.limit) || 5));
@@ -98,7 +101,7 @@ export class ChaseService {
     const sortDir = query.sortDir ?? 'desc';
 
     let authorised = await this.clientRepo.find({
-      where: { tenantId, authorisedAt: Not(IsNull()) },
+      where: staffClientWhere(tenantId, actor, { authorisedAt: Not(IsNull()) }),
       order: { createdAt: 'ASC' },
     });
 

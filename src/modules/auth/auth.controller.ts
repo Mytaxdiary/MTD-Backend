@@ -37,6 +37,8 @@ import { DisableMfaDto } from './dto/disable-mfa.dto';
 import { VerifyMfaDto } from './dto/verify-mfa.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { RequestUser } from './strategies/jwt.strategy';
+import { TeamService } from '../team/team.service';
+import { AcceptStaffInviteDto } from '../team/dto/team.dto';
 
 interface AuthRequest extends ExpressRequest {
   user: RequestUser;
@@ -51,6 +53,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
+    private readonly teamService: TeamService,
   ) {}
 
   // ── Register ─────────────────────────────────────────────────────────────
@@ -238,6 +241,27 @@ export class AuthController {
   async verifyEmail(@Query('token') token: string) {
     await this.authService.verifyEmail(token);
     return { message: 'Email verified successfully.' };
+  }
+
+  @Get('staff-invite')
+  @ApiOperation({ summary: 'Preview a staff invitation from the email link' })
+  @ApiQuery({ name: 'token', required: true })
+  async previewStaffInvite(@Query('token') token: string) {
+    return this.teamService.previewInvite(token);
+  }
+
+  @Post('accept-staff-invite')
+  @Throttle({ auth: { limit: 10, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Accept a staff invitation and create the staff account' })
+  async acceptStaffInvite(
+    @Body() dto: AcceptStaffInviteDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const user = await this.teamService.acceptInvite(dto.token, dto.password);
+    const result = await this.authService.issueSession(user, false);
+    this.setAuthCookies(res, result.accessToken, result.refreshToken);
+    return result;
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────

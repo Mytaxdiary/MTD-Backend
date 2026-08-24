@@ -22,6 +22,11 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import {
+  RequireOwner,
+  RequirePermission,
+} from '../../common/decorators/require-permission.decorator';
 import { ClientsService } from './clients.service';
 import { ClientPipelineService } from './client-pipeline.service';
 import { CreateClientDto } from './dto/create-client.dto';
@@ -40,18 +45,14 @@ import { GetIncomeSummaryQueryDto } from './dto/get-income-summary-query.dto';
 import { CreateSeCumulativeDto } from './dto/create-se-cumulative.dto';
 import { CreateUkPropertyCumulativeDto } from './dto/create-uk-property-cumulative.dto';
 import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
-
-interface RequestUser {
-  userId: string;
-  email: string;
-  tenantId: string;
-  loginAt?: number;
-  mfaAuthenticated?: boolean;
-}
+import type { RequestUser } from '../auth/strategies/jwt.strategy';
+import { AssignClientDto } from './dto/assign-client.dto';
+import { StaffAssignedClientInterceptor } from './staff-assigned-client.interceptor';
 
 @ApiTags('Clients')
 @ApiBearerAuth('access-token')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseInterceptors(StaffAssignedClientInterceptor)
 @Controller('clients')
 export class ClientsController {
   constructor(
@@ -67,6 +68,7 @@ export class ClientsController {
 
   /** Create client + send HMRC invitation + send notification email */
   @Post()
+  @RequirePermission('canAddClients')
   @ApiOperation({ summary: 'Add a client and send HMRC authorisation invitation' })
   async create(@Request() req: ExpressRequest, @Body() dto: CreateClientDto) {
     const { tenantId, email, userId } = req.user as RequestUser;
@@ -77,24 +79,40 @@ export class ClientsController {
   @Get()
   @ApiOperation({ summary: 'List clients (paginated, filtered)' })
   async findAll(@Request() req: ExpressRequest, @Query() query: ListClientsQueryDto) {
-    const { tenantId } = req.user as RequestUser;
-    return this.clientsService.findAll(tenantId, query, this.fraudContext(req));
+    const actor = req.user as RequestUser;
+    return this.clientsService.findAll(actor.tenantId, query, this.fraudContext(req), actor);
   }
 
   /** Pending HMRC invitations (sent, awaiting client accept) */
   @Get('outstanding-invitations')
   @ApiOperation({ summary: 'List clients with outstanding HMRC invitations' })
   async findOutstandingInvitations(@Request() req: ExpressRequest) {
-    const { tenantId } = req.user as RequestUser;
-    return this.clientsService.findOutstandingInvitations(tenantId, this.fraudContext(req));
+    const actor = req.user as RequestUser;
+    return this.clientsService.findOutstandingInvitations(
+      actor.tenantId,
+      this.fraudContext(req),
+      actor,
+    );
   }
 
   /** Get a single client */
   @Get(':id')
   @ApiOperation({ summary: 'Get client by ID' })
   async findOne(@Request() req: ExpressRequest, @Param('id') id: string) {
-    const { tenantId } = req.user as RequestUser;
-    return this.clientsService.findOne(tenantId, id);
+    const actor = req.user as RequestUser;
+    return this.clientsService.findOne(actor.tenantId, id, actor);
+  }
+
+  /** Owner assigns or unassigns a client to a staff member */
+  @Patch(':id/assignment')
+  @RequireOwner()
+  @ApiOperation({ summary: 'Assign or unassign a client to a staff member (owner only)' })
+  async assignClient(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Body() dto: AssignClientDto,
+  ) {
+    return this.clientsService.assignClient(req.user as RequestUser, id, dto.assignedToUserId);
   }
 
   /** Update editable client fields (e.g. UTR) */
@@ -105,8 +123,8 @@ export class ClientsController {
     @Param('id') id: string,
     @Body() dto: UpdateClientDto,
   ) {
-    const { tenantId } = req.user as RequestUser;
-    return this.clientsService.updateClient(tenantId, id, dto);
+    const actor = req.user as RequestUser;
+    return this.clientsService.updateClient(actor.tenantId, id, dto, actor);
   }
 
   /** Client pipeline status audit history */
@@ -134,6 +152,7 @@ export class ClientsController {
 
   /** Resend HMRC invitation for an existing client */
   @Post(':id/resend-invitation')
+  @RequirePermission('canAddClients')
   @ApiOperation({ summary: 'Resend HMRC authorisation invitation for an existing client' })
   async resendInvitation(
     @Request() req: ExpressRequest,
@@ -328,6 +347,7 @@ export class ClientsController {
 
   /** SA Accounts balance and transactions (v4.0) */
   @Get(':id/liabilities/balance-and-transactions')
+  @RequirePermission('canViewLiabilities')
   @ApiOperation({ summary: 'Retrieve HMRC SA balance and transactions for a client' })
   async getBalanceAndTransactions(
     @Request() req: ExpressRequest,
@@ -345,6 +365,7 @@ export class ClientsController {
 
   /** SA Accounts payment history and allocations (v4.0) */
   @Get(':id/liabilities/payments-and-allocations')
+  @RequirePermission('canViewLiabilities')
   @ApiOperation({ summary: 'List HMRC SA payments and allocation details for a client' })
   async getPaymentsAndAllocations(
     @Request() req: ExpressRequest,
@@ -362,6 +383,7 @@ export class ClientsController {
 
   /** SA Accounts charge history by transaction ID path (v4.0) */
   @Get(':id/liabilities/charges/by-transaction/:transactionId')
+  @RequirePermission('canViewLiabilities')
   @ApiOperation({ summary: 'Retrieve HMRC SA charge history by transaction ID path' })
   async getChargeHistoryByTransactionId(
     @Request() req: ExpressRequest,
@@ -380,6 +402,7 @@ export class ClientsController {
 
   /** SA Accounts charge history by charge reference (v4.0) */
   @Get(':id/liabilities/charges/by-reference/:chargeReference')
+  @RequirePermission('canViewLiabilities')
   @ApiOperation({ summary: 'Retrieve HMRC SA charge history by charge reference' })
   async getChargeHistoryByChargeReference(
     @Request() req: ExpressRequest,
@@ -398,6 +421,7 @@ export class ClientsController {
 
   /** SA Accounts charge history by document / transaction ID (v4.0) */
   @Get(':id/liabilities/charges/:transactionId')
+  @RequirePermission('canViewLiabilities')
   @ApiOperation({ summary: 'Retrieve HMRC SA charge history by document ID' })
   async getChargeHistoryByDocumentId(
     @Request() req: ExpressRequest,
@@ -467,6 +491,7 @@ export class ClientsController {
 
   /** Send a message to the client's portal */
   @Post(':id/portal-message')
+  @RequirePermission('canChase')
   @ApiOperation({ summary: 'Send a message to the client portal' })
   async sendPortalMessage(
     @Request() req: ExpressRequest,
@@ -479,6 +504,7 @@ export class ClientsController {
 
   /** Resend portal setup invite email */
   @Post(':id/portal-invite')
+  @RequirePermission('canAddClients')
   @ApiOperation({ summary: 'Resend client portal setup invite' })
   async resendPortalInvite(@Request() req: ExpressRequest, @Param('id') id: string) {
     const { tenantId, userId } = req.user as RequestUser;
@@ -524,25 +550,28 @@ export class ClientsController {
   // ── Client Notes ─────────────────────────────────────────────────────────────
 
   @Get(':id/notes')
+  @RequirePermission('canViewNotes')
   @ApiOperation({ summary: 'List notes for a client' })
   async getNotes(@Request() req: ExpressRequest, @Param('id') id: string) {
-    const { tenantId } = req.user as RequestUser;
-    return this.clientsService.getNotes(tenantId, id);
+    const actor = req.user as RequestUser;
+    return this.clientsService.getNotes(actor.tenantId, id, actor);
   }
 
   @Post(':id/notes')
+  @RequirePermission('canViewNotes')
   @ApiOperation({ summary: 'Create a note for a client' })
   async createNote(
     @Request() req: ExpressRequest,
     @Param('id') id: string,
     @Body() body: { text: string },
   ) {
-    const { tenantId, email } = req.user as RequestUser;
-    const authorName = (req.user as RequestUser & { name?: string }).name ?? email;
-    return this.clientsService.createNote(tenantId, id, body.text, authorName);
+    const actor = req.user as RequestUser;
+    const authorName = actor.email;
+    return this.clientsService.createNote(actor.tenantId, id, body.text, authorName, actor);
   }
 
   @Patch(':id/notes/:noteId')
+  @RequirePermission('canViewNotes')
   @ApiOperation({ summary: 'Update a client note (text or isPinned)' })
   async updateNote(
     @Request() req: ExpressRequest,
@@ -550,24 +579,26 @@ export class ClientsController {
     @Param('noteId') noteId: string,
     @Body() body: { text?: string; isPinned?: boolean },
   ) {
-    const { tenantId } = req.user as RequestUser;
-    return this.clientsService.updateNote(tenantId, id, noteId, body);
+    const actor = req.user as RequestUser;
+    return this.clientsService.updateNote(actor.tenantId, id, noteId, body, actor);
   }
 
   @Delete(':id/notes/:noteId')
   @HttpCode(204)
+  @RequirePermission('canViewNotes')
   @ApiOperation({ summary: 'Delete a client note' })
   async deleteNote(
     @Request() req: ExpressRequest,
     @Param('id') id: string,
     @Param('noteId') noteId: string,
   ) {
-    const { tenantId } = req.user as RequestUser;
-    await this.clientsService.deleteNote(tenantId, id, noteId);
+    const actor = req.user as RequestUser;
+    await this.clientsService.deleteNote(actor.tenantId, id, noteId, actor);
   }
 
   /** Sandbox only — simulate client accepting invitation (Postman step 9) */
   @Post(':id/accept-invitation-sandbox')
+  @RequirePermission('canAddClients')
   @ApiOperation({ summary: 'Accept HMRC invitation in sandbox (test-support API)' })
   async acceptInvitationSandbox(@Request() req: ExpressRequest, @Param('id') id: string) {
     const { tenantId } = req.user as RequestUser;
@@ -576,6 +607,7 @@ export class ClientsController {
 
   /** Sandbox only — create a UK property income source via SA Test Support */
   @Post(':id/sandbox/uk-property-business')
+  @RequirePermission('canAddClients')
   @ApiOperation({ summary: 'Create a sandbox UK property test business for a client' })
   async createUkPropertyTestBusiness(@Request() req: ExpressRequest, @Param('id') id: string) {
     const { tenantId } = req.user as RequestUser;
@@ -584,6 +616,7 @@ export class ClientsController {
 
   /** Bulk CSV import — validates all rows first; creates clients + sends invitations only if clean */
   @Post('import')
+  @RequirePermission('canAddClients')
   @ApiOperation({ summary: 'Bulk import clients from a CSV file' })
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(

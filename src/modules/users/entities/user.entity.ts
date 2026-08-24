@@ -2,6 +2,7 @@ import { Column, Entity, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '../../../database/base.entity';
 import { Role } from './role.entity';
 import { Tenant } from '../../tenants/entities/tenant.entity';
+import type { StaffPermissions } from '../permissions';
 
 /**
  * Users table — stores agent/accountant accounts.
@@ -52,4 +53,8 @@ export class User extends BaseEntity {
 
   @Column({ name: 'tenant_id', type: 'varchar', length: 36, nullable: true })
   tenantId?: string;
+
+  /** Granular flags. Owner always has all true. Staff flags are set at invite time. */
+  @Column({ type: 'json', nullable: true })
+  permissions?: StaffPermissions;
 }

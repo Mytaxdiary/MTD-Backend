@@ -43,6 +43,7 @@ const mockUsersService = {
   create: jest.fn(),
   updateLastLogin: jest.fn(),
   findOrCreateAgentRole: jest.fn(),
+  findOrCreateOwnerRole: jest.fn(),
   markEmailVerified: jest.fn(),
   updatePassword: jest.fn(),
   setMfa: jest.fn(),

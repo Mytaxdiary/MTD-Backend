@@ -2,8 +2,7 @@ import { Column, Entity } from 'typeorm';
 import { BaseEntity } from '../../../database/base.entity';
 
 /**
- * Roles table — single role for now: 'Agent'
- * Extended to support multiple roles in a future RBAC phase.
+ * Roles table — firm roles: owner | staff.
  */
 @Entity('roles')
 export class Role extends BaseEntity {

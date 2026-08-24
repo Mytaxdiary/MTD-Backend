@@ -12,6 +12,8 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import type { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { ChaseLogsService } from './chase-logs.service';
 import { CreateChaseLogDto } from './dto/create-chase-log.dto';
 
@@ -22,7 +24,8 @@ interface RequestUser {
 
 @ApiTags('chase-logs')
 @ApiBearerAuth('access-token')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@RequirePermission('canChase')
 @Controller('chase-logs')
 export class ChaseLogsController {
   constructor(private readonly service: ChaseLogsService) {}

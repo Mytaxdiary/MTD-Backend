@@ -6,6 +6,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
   UnprocessableEntityException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -81,6 +82,9 @@ import { AppNotificationsService } from '../app-notifications/app-notifications.
 import { PortalService } from '../client-portal/portal.service';
 import { NotificationPreferences } from '../tenants/entities/notification-preferences.entity';
 import { ClientPipelineService } from './client-pipeline.service';
+import { User } from '../users/entities/user.entity';
+import type { RequestUser } from '../auth/strategies/jwt.strategy';
+import { staffClientWhere } from './staff-client-scope.util';
 
 /** HMRC POST /relationships result. */
 type HmrcRelationshipResult = 'active' | 'inactive';
@@ -118,6 +122,8 @@ export class ClientsService {
     private readonly notifPrefsRepo: Repository<NotificationPreferences>,
     @InjectRepository(ClientNote)
     private readonly clientNoteRepo: Repository<ClientNote>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly configService: ConfigService,
     private readonly hmrcService: HmrcService,
     private readonly hmrcApiClient: HmrcApiClient,
@@ -281,6 +287,7 @@ export class ClientsService {
     tenantId: string,
     query: ListClientsQueryDto = {},
     fraudContext?: HmrcFraudRequestContext | null,
+    actor?: RequestUser | null,
   ): Promise<{
     clients: Array<
       Client & {
@@ -306,7 +313,7 @@ export class ClientsService {
     const agentType = (query.agentType ?? 'all').trim().toLowerCase();
 
     // Build DB WHERE — status filter applied at query level
-    const base: FindOptionsWhere<Client> = { tenantId };
+    const base: FindOptionsWhere<Client> = staffClientWhere(tenantId, actor);
     let where: FindOptionsWhere<Client> | FindOptionsWhere<Client>[];
     switch (status) {
       case 'pending':
@@ -455,15 +462,17 @@ export class ClientsService {
   async findOutstandingInvitations(
     tenantId: string,
     fraudContext?: HmrcFraudRequestContext | null,
+    actor?: RequestUser | null,
   ): Promise<Client[]> {
+    const where = staffClientWhere(tenantId, actor, { invitationStatus: 'pending' });
     const clients = await this.clientRepo.find({
-      where: { tenantId, invitationStatus: 'pending' },
+      where,
       order: { invitationSentAt: 'DESC' },
     });
     const withInvite = clients.filter((c) => !!c.invitationId);
     await this.syncInvitationStatusesFromHmrc(tenantId, withInvite, fraudContext);
     const refreshed = await this.clientRepo.find({
-      where: { tenantId, invitationStatus: 'pending' },
+      where,
       order: { invitationSentAt: 'DESC' },
     });
     return refreshed.filter((c) => !!c.invitationId);
@@ -673,18 +682,42 @@ export class ClientsService {
     }
   }
 
-  async findOne(tenantId: string, id: string): Promise<Client> {
-    const client = await this.clientRepo.findOne({ where: { id, tenantId } });
+  async findOne(tenantId: string, id: string, actor?: RequestUser | null): Promise<Client> {
+    const client = await this.clientRepo.findOne({
+      where: staffClientWhere(tenantId, actor, { id }),
+    });
     if (!client) throw new NotFoundException('Client not found');
     return client;
+  }
+
+  async assignClient(
+    actor: RequestUser,
+    clientId: string,
+    assignedToUserId: string | null,
+  ): Promise<Client> {
+    if (actor.role === 'staff') {
+      throw new ForbiddenException('Only the firm owner can assign clients.');
+    }
+    const client = await this.findOne(actor.tenantId, clientId);
+    if (assignedToUserId) {
+      const user = await this.userRepo.findOne({
+        where: { id: assignedToUserId, tenantId: actor.tenantId, isActive: true },
+      });
+      if (!user) throw new NotFoundException('Team member not found.');
+      client.assignedToUserId = user.id;
+    } else {
+      client.assignedToUserId = null;
+    }
+    return this.clientRepo.save(client);
   }
 
   async updateClient(
     tenantId: string,
     id: string,
     fields: { utr?: string; preferredName?: string },
+    actor?: RequestUser | null,
   ): Promise<Client> {
-    const client = await this.findOne(tenantId, id);
+    const client = await this.findOne(tenantId, id, actor);
     if (fields.utr !== undefined) client.utr = fields.utr || undefined;
     if (fields.preferredName !== undefined) {
       const trimmed = fields.preferredName.trim();
@@ -2773,8 +2806,12 @@ export class ClientsService {
 
   // ── Client Notes ────────────────────────────────────────────────────────────
 
-  async getNotes(tenantId: string, clientId: string): Promise<ClientNote[]> {
-    await this.assertClientBelongsToTenant(tenantId, clientId);
+  async getNotes(
+    tenantId: string,
+    clientId: string,
+    actor?: RequestUser | null,
+  ): Promise<ClientNote[]> {
+    await this.assertClientBelongsToTenant(tenantId, clientId, actor);
     return this.clientNoteRepo.find({
       where: { tenantId, clientId },
       order: { isPinned: 'DESC', createdAt: 'DESC' },
@@ -2786,8 +2823,9 @@ export class ClientsService {
     clientId: string,
     text: string,
     authorName: string,
+    actor?: RequestUser | null,
   ): Promise<ClientNote> {
-    await this.assertClientBelongsToTenant(tenantId, clientId);
+    await this.assertClientBelongsToTenant(tenantId, clientId, actor);
     const note = this.clientNoteRepo.create({
       tenantId,
       clientId,
@@ -2803,8 +2841,9 @@ export class ClientsService {
     clientId: string,
     noteId: string,
     patch: { text?: string; isPinned?: boolean },
+    actor?: RequestUser | null,
   ): Promise<ClientNote> {
-    await this.assertClientBelongsToTenant(tenantId, clientId);
+    await this.assertClientBelongsToTenant(tenantId, clientId, actor);
     const note = await this.clientNoteRepo.findOne({ where: { id: noteId, tenantId, clientId } });
     if (!note) throw new NotFoundException('Note not found');
     if (patch.text !== undefined) note.text = patch.text;
@@ -2812,15 +2851,26 @@ export class ClientsService {
     return this.clientNoteRepo.save(note);
   }
 
-  async deleteNote(tenantId: string, clientId: string, noteId: string): Promise<void> {
-    await this.assertClientBelongsToTenant(tenantId, clientId);
+  async deleteNote(
+    tenantId: string,
+    clientId: string,
+    noteId: string,
+    actor?: RequestUser | null,
+  ): Promise<void> {
+    await this.assertClientBelongsToTenant(tenantId, clientId, actor);
     const note = await this.clientNoteRepo.findOne({ where: { id: noteId, tenantId, clientId } });
     if (!note) throw new NotFoundException('Note not found');
     await this.clientNoteRepo.softDelete(noteId);
   }
 
-  private async assertClientBelongsToTenant(tenantId: string, clientId: string): Promise<void> {
-    const exists = await this.clientRepo.existsBy({ id: clientId, tenantId });
+  private async assertClientBelongsToTenant(
+    tenantId: string,
+    clientId: string,
+    actor?: RequestUser | null,
+  ): Promise<void> {
+    const exists = await this.clientRepo.existsBy(
+      staffClientWhere(tenantId, actor, { id: clientId }),
+    );
     if (!exists) throw new NotFoundException('Client not found');
   }
 }

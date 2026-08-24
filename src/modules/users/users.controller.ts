@@ -6,7 +6,11 @@ import {
   HttpStatus,
   NotFoundException,
   ForbiddenException,
+  UseGuards,
 } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequireOwner } from '../../common/decorators/require-permission.decorator';
 import { ConfigService } from '@nestjs/config';
 import {
   ApiTags,
@@ -18,6 +22,8 @@ import {
 import { UsersService } from './users.service';
 
 @ApiTags('Users')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@RequireOwner()
 @Controller('users')
 export class UsersController {
   constructor(

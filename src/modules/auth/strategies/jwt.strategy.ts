@@ -6,6 +6,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Request } from 'express';
 import { User } from '../../users/entities/user.entity';
+import type { FirmRole, StaffPermissions } from '../../users/permissions';
+import { normalizePermissions, resolveFirmRole } from '../../users/permissions';
 
 export interface JwtPayload {
   /** Subject — userId (UUID) */
@@ -14,6 +16,8 @@ export interface JwtPayload {
   tenantId: string;
   /** True when the user completed a TOTP challenge in this session. */
   mfaAuthenticated?: boolean;
+  role?: FirmRole;
+  permissions?: StaffPermissions;
   iat?: number;
   exp?: number;
 }
@@ -26,6 +30,8 @@ export interface RequestUser {
   loginAt?: number;
   /** True when TOTP was verified during this login. */
   mfaAuthenticated?: boolean;
+  role: FirmRole;
+  permissions: StaffPermissions;
 }
 
 /** Cookie name shared with the frontend tokenStorage constants. */
@@ -56,12 +62,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user || !user.isActive) {
       throw new UnauthorizedException('User no longer exists');
     }
+    const role = resolveFirmRole(user.role?.name);
     return {
       userId: payload.sub,
       email: payload.email,
       tenantId: payload.tenantId,
       loginAt: payload.iat,
       mfaAuthenticated: payload.mfaAuthenticated ?? false,
+      role,
+      permissions: normalizePermissions(user.permissions, role),
     };
   }
 }

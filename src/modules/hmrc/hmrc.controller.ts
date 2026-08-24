@@ -14,6 +14,8 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { HmrcService } from './hmrc.service';
 import { ExchangeCodeDto } from './dto/exchange-code.dto';
 import { UpdateArnDto } from './dto/update-arn.dto';
@@ -22,7 +24,8 @@ import { summarizeFraudValidation } from './fraud-prevention.validation.util';
 
 @ApiTags('HMRC')
 @ApiBearerAuth('access-token')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@RequirePermission('canViewSettings')
 @Controller('hmrc')
 export class HmrcController {
   constructor(private readonly hmrcService: HmrcService) {}

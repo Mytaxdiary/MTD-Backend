@@ -40,6 +40,7 @@ import {
   deletionCancelledPlainText,
   type DeletionCancelledEmailData,
 } from './templates/deletion-cancelled.template';
+import { staffInviteTemplate, staffInvitePlainText } from './templates/staff-invite.template';
 import { EmailConnectionsService } from '../email-connections/email-connections.service';
 
 export type ClientMailSendMeta = {
@@ -109,6 +110,18 @@ export class MailService {
       'Welcome to My Tax Diary',
       welcomeTemplate(firstName, this.loginUrl),
       `Hi ${firstName},\n\nYour My Tax Diary account is ready. Sign in at:\n${this.loginUrl}\n\nThe My Tax Diary team`,
+    );
+  }
+
+  async sendStaffInviteEmail(
+    to: string,
+    opts: { firstName: string; firmName: string; inviteUrl: string },
+  ): Promise<void> {
+    await this.send(
+      to,
+      `You are invited to join ${opts.firmName} on My Tax Diary`,
+      staffInviteTemplate(opts),
+      staffInvitePlainText(opts),
     );
   }
 

@@ -14,6 +14,8 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { EmailConnectionsService } from './email-connections.service';
 import { EmailCallbackDto } from './dto/email-callback.dto';
 import { EmailConnectQueryDto } from './dto/email-connect-query.dto';
@@ -26,7 +28,8 @@ interface RequestUser {
 
 @ApiTags('Email')
 @ApiBearerAuth('access-token')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@RequirePermission('canChase', 'canViewSettings')
 @Controller('email')
 export class EmailConnectionsController {
   constructor(private readonly emailConnectionsService: EmailConnectionsService) {}

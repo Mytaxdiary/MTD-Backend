@@ -16,8 +16,10 @@ import { ClientUser } from '../client-portal/entities/client-user.entity';
 import { PortalMessage } from '../client-portal/entities/portal-message.entity';
 import { PortalFile } from '../client-portal/entities/portal-file.entity';
 import { ClientNote } from '../clients/entities/client-note.entity';
+import { OWNER_PERMISSIONS, type FirmRole, type StaffPermissions } from './permissions';
 
-const AGENT_ROLE = 'Agent';
+const OWNER_ROLE = 'owner';
+const STAFF_ROLE = 'staff';
 const PORTAL_FILES_BASE = path.join(process.cwd(), 'uploads', 'portal-files');
 
 @Injectable()
@@ -74,8 +76,12 @@ export class UsersService {
     passwordHash: string;
     role: Role;
     tenantId: string;
+    permissions?: StaffPermissions;
   }): Promise<User> {
-    const user = this.userRepo.create(data);
+    const user = this.userRepo.create({
+      ...data,
+      permissions: data.permissions ?? OWNER_PERMISSIONS,
+    });
     return this.userRepo.save(user);
   }
 
@@ -191,15 +197,27 @@ export class UsersService {
   }
 
   /**
-   * Finds the Agent role, creating it if it does not yet exist.
-   * This is the only role supported in this phase.
+   * Finds a firm role, creating it if it does not yet exist.
    */
-  async findOrCreateAgentRole(): Promise<Role> {
-    let role = await this.roleRepo.findOne({ where: { name: AGENT_ROLE } });
+  async findOrCreateRole(name: FirmRole): Promise<Role> {
+    let role = await this.roleRepo.findOne({ where: { name } });
     if (!role) {
-      role = this.roleRepo.create({ name: AGENT_ROLE });
+      role = this.roleRepo.create({ name });
       role = await this.roleRepo.save(role);
     }
     return role;
+  }
+
+  async findOrCreateOwnerRole(): Promise<Role> {
+    return this.findOrCreateRole(OWNER_ROLE);
+  }
+
+  async findOrCreateStaffRole(): Promise<Role> {
+    return this.findOrCreateRole(STAFF_ROLE);
+  }
+
+  /** @deprecated Use findOrCreateOwnerRole. Kept so existing tests still compile. */
+  async findOrCreateAgentRole(): Promise<Role> {
+    return this.findOrCreateOwnerRole();
   }
 }

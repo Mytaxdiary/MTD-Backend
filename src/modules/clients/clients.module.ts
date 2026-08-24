@@ -8,6 +8,7 @@ import { ClientStatusHistory } from './entities/client-status-history.entity';
 import { ClientsService } from './clients.service';
 import { ClientPipelineService } from './client-pipeline.service';
 import { ClientsController } from './clients.controller';
+import { StaffAssignedClientInterceptor } from './staff-assigned-client.interceptor';
 import { HmrcModule } from '../hmrc/hmrc.module';
 import { MailModule } from '../mail/mail.module';
 import { Tenant } from '../tenants/entities/tenant.entity';
@@ -33,7 +34,7 @@ import { ClientPortalModule } from '../client-portal/client-portal.module';
     MulterModule.register({ storage: memoryStorage() }),
   ],
   controllers: [ClientsController],
-  providers: [ClientsService, ClientPipelineService],
+  providers: [ClientsService, ClientPipelineService, StaffAssignedClientInterceptor],
   exports: [ClientsService, ClientPipelineService],
 })
 export class ClientsModule {}
