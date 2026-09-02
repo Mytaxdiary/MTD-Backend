@@ -1,4 +1,4 @@
-import * as archiver from 'archiver';
+import archiver from 'archiver';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -133,7 +133,7 @@ export class AccountService {
       `attachment; filename="mytaxdiary-export-${new Date().toISOString().slice(0, 10)}.zip"`,
     );
 
-    const archive = new archiver.ZipArchive({ zlib: { level: 9 } });
+    const archive = archiver('zip', { zlib: { level: 9 } });
     archive.on('error', (err) => {
       this.logger.error('Archive error', err);
       if (!res.headersSent) res.status(500).end();
