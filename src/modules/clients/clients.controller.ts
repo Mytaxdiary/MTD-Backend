@@ -47,6 +47,7 @@ import { CreateUkPropertyCumulativeDto } from './dto/create-uk-property-cumulati
 import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
 import type { RequestUser } from '../auth/strategies/jwt.strategy';
 import { AssignClientDto } from './dto/assign-client.dto';
+import { InvitePortalClientDto } from './dto/invite-portal-client.dto';
 import { StaffAssignedClientInterceptor } from './staff-assigned-client.interceptor';
 
 @ApiTags('Clients')
@@ -93,6 +94,24 @@ export class ClientsController {
       this.fraudContext(req),
       actor,
     );
+  }
+
+  /** Invite a portal-only customer (no HMRC authorisation) */
+  @Post('portal-invite')
+  @RequirePermission('canAddClients')
+  @ApiOperation({ summary: 'Invite a customer to the client portal only' })
+  async invitePortalClient(@Request() req: ExpressRequest, @Body() dto: InvitePortalClientDto) {
+    const actor = req.user as RequestUser;
+    return this.clientsService.invitePortalClient(actor.tenantId, dto, actor.userId, actor);
+  }
+
+  /** List portal customers for customer management */
+  @Get('portal-customers')
+  @RequirePermission('canAddClients')
+  @ApiOperation({ summary: 'List portal customers' })
+  async listPortalCustomers(@Request() req: ExpressRequest) {
+    const actor = req.user as RequestUser;
+    return this.clientsService.listPortalCustomers(actor.tenantId, actor);
   }
 
   /** Get a single client */
@@ -502,15 +521,42 @@ export class ClientsController {
     return this.portalService.sendMessage(tenantId, id, dto, userId);
   }
 
+  /** List portal chat history for a client (agent view) */
+  @Get(':id/portal-messages')
+  @ApiOperation({ summary: 'List portal chat history for a client' })
+  async listPortalMessages(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const { tenantId } = req.user as RequestUser;
+    await this.clientsService.findOne(tenantId, id, req.user as RequestUser);
+    const messages = await this.portalService.getMessagesForAgent(tenantId, id);
+    await this.portalService.markClientMessagesRead(tenantId, id);
+    return messages;
+  }
+
   /** Resend portal setup invite email */
   @Post(':id/portal-invite')
   @RequirePermission('canAddClients')
   @ApiOperation({ summary: 'Resend client portal setup invite' })
   async resendPortalInvite(@Request() req: ExpressRequest, @Param('id') id: string) {
-    const { tenantId, userId } = req.user as RequestUser;
-    const client = await this.clientsService.findOne(tenantId, id);
-    await this.portalService.createAndInvite(tenantId, id, client.email, client.name, userId);
+    const actor = req.user as RequestUser;
+    const client = await this.clientsService.findOne(actor.tenantId, id, actor);
+    await this.portalService.createAndInvite(
+      actor.tenantId,
+      id,
+      client.email,
+      client.name,
+      actor.userId,
+    );
     return { message: 'Portal invite resent' };
+  }
+
+  /** Remove portal access (or delete portal-only customer) */
+  @Delete(':id/portal-access')
+  @RequirePermission('canAddClients')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Remove a customer’s portal access' })
+  async removePortalAccess(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const actor = req.user as RequestUser;
+    return this.clientsService.removePortalCustomer(actor.tenantId, id, actor);
   }
 
   /** Generate a short-lived preview token for the agent to view the client portal */

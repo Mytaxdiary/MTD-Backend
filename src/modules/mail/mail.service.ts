@@ -26,6 +26,11 @@ import {
   type PortalMessageEmailData,
 } from './templates/portal-message.template';
 import {
+  portalClientReplyTemplate,
+  portalClientReplyPlainText,
+  type PortalClientReplyEmailData,
+} from './templates/portal-client-reply.template';
+import {
   portalFileUploadedTemplate,
   portalFileUploadedPlainText,
   type PortalFileUploadedEmailData,
@@ -187,6 +192,15 @@ ${body
       portalMessageTemplate(data),
       portalMessagePlainText(data),
       actingUserId,
+    );
+  }
+
+  async sendPortalClientReply(to: string, data: PortalClientReplyEmailData): Promise<void> {
+    await this.send(
+      to,
+      `Portal message from ${data.clientName}: ${data.subject}`,
+      portalClientReplyTemplate(data),
+      portalClientReplyPlainText(data),
     );
   }
 

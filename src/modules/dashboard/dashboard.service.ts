@@ -137,7 +137,7 @@ export class DashboardService {
   ) {}
 
   async getSummary(tenantId: string, actor?: RequestUser | null): Promise<DashboardSummary> {
-    const where = staffClientWhere(tenantId, actor);
+    const where = staffClientWhere(tenantId, actor, {}, { excludePortalOnly: true });
     const clients = await this.clientRepo.find({
       where,
       order: { createdAt: 'ASC' },

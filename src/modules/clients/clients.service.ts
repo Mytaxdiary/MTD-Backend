@@ -12,11 +12,13 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, Not, QueryFailedError, Repository } from 'typeorm';
 import type { FindOptionsWhere } from 'typeorm';
+import * as crypto from 'crypto';
 import type { ListClientsQueryDto } from './dto/list-clients-query.dto';
 import { parseCsvBuffer, validateRows } from './bulk-import.util';
 import type { BulkImportSuccess } from './dto/bulk-import-client.dto';
 import { Client } from './entities/client.entity';
 import { CreateClientDto } from './dto/create-client.dto';
+import { InvitePortalClientDto } from './dto/invite-portal-client.dto';
 import { HmrcService } from '../hmrc/hmrc.service';
 import { HmrcApiClient } from '../hmrc/hmrc-api.client';
 import type { HmrcFraudRequestContext } from '../hmrc/fraud-prevention.types';
@@ -312,8 +314,13 @@ export class ClientsService {
     const search = (query.search ?? '').trim().toLowerCase();
     const agentType = (query.agentType ?? 'all').trim().toLowerCase();
 
-    // Build DB WHERE — status filter applied at query level
-    const base: FindOptionsWhere<Client> = staffClientWhere(tenantId, actor);
+    // Build DB WHERE — status filter applied at query level; hide portal-only customers
+    const base: FindOptionsWhere<Client> = staffClientWhere(
+      tenantId,
+      actor,
+      {},
+      { excludePortalOnly: true },
+    );
     let where: FindOptionsWhere<Client> | FindOptionsWhere<Client>[];
     switch (status) {
       case 'pending':
@@ -464,7 +471,12 @@ export class ClientsService {
     fraudContext?: HmrcFraudRequestContext | null,
     actor?: RequestUser | null,
   ): Promise<Client[]> {
-    const where = staffClientWhere(tenantId, actor, { invitationStatus: 'pending' });
+    const where = staffClientWhere(
+      tenantId,
+      actor,
+      { invitationStatus: 'pending' },
+      { excludePortalOnly: true },
+    );
     const clients = await this.clientRepo.find({
       where,
       order: { invitationSentAt: 'DESC' },
@@ -2872,5 +2884,86 @@ export class ClientsService {
       staffClientWhere(tenantId, actor, { id: clientId }),
     );
     if (!exists) throw new NotFoundException('Client not found');
+  }
+
+  /** Portal-only invite — first name, surname, email. No HMRC authorisation. */
+  async invitePortalClient(
+    tenantId: string,
+    dto: InvitePortalClientDto,
+    actingUserId?: string,
+    actor?: RequestUser | null,
+  ): Promise<{ client: Client; message: string }> {
+    const email = dto.email.trim().toLowerCase();
+    const firstName = dto.firstName.trim();
+    const lastName = dto.lastName.trim();
+    const name = `${firstName} ${lastName}`.trim();
+
+    if (await this.portalService.isPortalEmailInUse(tenantId, email)) {
+      throw new ConflictException(
+        'A portal account with this email already exists. Resend the invite from Customer management in Settings.',
+      );
+    }
+
+    const ninoClean = await this.generateUniquePortalPlaceholderNino(tenantId);
+    const client = this.clientRepo.create({
+      tenantId,
+      name,
+      nino: ninoClean,
+      ninoHash: piiHash(ninoClean),
+      postcode: 'PORTAL',
+      email,
+      agentType: 'main',
+      invitationStatus: 'portal-only',
+      pipelineStatus: 'portal-only',
+      portalOnly: true,
+      assignedToUserId: actor?.role === 'staff' && actor.userId ? actor.userId : null,
+    });
+
+    try {
+      await this.clientRepo.save(client);
+    } catch (err) {
+      if (this.isDuplicateNinoError(err)) {
+        throw new ConflictException('Could not create portal customer. Please try again.');
+      }
+      throw err;
+    }
+
+    await this.portalService
+      .createAndInvite(tenantId, client.id, email, name, actingUserId)
+      .catch((err) => {
+        this.logger.warn(
+          `Portal invite failed for portal-only client ${client.id}: ${String(err)}`,
+        );
+      });
+
+    return {
+      client,
+      message: 'Portal invite sent. The customer will receive an email to set up their password.',
+    };
+  }
+
+  /** All portal customers for this firm (HMRC clients with portal access and portal-only customers). */
+  async listPortalCustomers(tenantId: string, actor?: RequestUser | null) {
+    return this.portalService.listCustomers(tenantId, actor);
+  }
+
+  /** Revoke portal access. Portal-only customers are removed; HMRC clients keep their record. */
+  async removePortalCustomer(
+    tenantId: string,
+    clientId: string,
+    actor?: RequestUser | null,
+  ): Promise<{ message: string }> {
+    const client = await this.findOne(tenantId, clientId, actor);
+    return this.portalService.revokeAccess(tenantId, client, actor);
+  }
+
+  private async generateUniquePortalPlaceholderNino(tenantId: string): Promise<string> {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const digits = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+      const nino = `PO${digits}A`;
+      const existing = await this.findByNino(tenantId, nino);
+      if (!existing) return nino;
+    }
+    throw new InternalServerErrorException('Could not allocate a portal customer record.');
   }
 }

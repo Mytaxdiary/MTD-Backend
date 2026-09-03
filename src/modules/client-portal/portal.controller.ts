@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
   Param,
@@ -20,6 +21,7 @@ import * as path from 'path';
 import { PortalJwtGuard } from './guards/portal-jwt.guard';
 import { PortalService } from './portal.service';
 import type { PortalRequestUser } from './strategies/portal-jwt.strategy';
+import { ClientPortalReplyDto } from './dto/client-portal-reply.dto';
 
 @ApiTags('Client Portal')
 @ApiBearerAuth('access-token')
@@ -69,10 +71,18 @@ export class PortalController {
   }
 
   @Get('messages')
-  @ApiOperation({ summary: 'Messages from accountant' })
+  @ApiOperation({ summary: 'Portal chat history (client + accountant)' })
   getMessages(@Request() req: ExpressRequest) {
     const { clientId } = this.user(req);
     return this.portalService.getMessages(clientId);
+  }
+
+  @Post('messages')
+  @ApiOperation({ summary: 'Client sends a portal chat message to the accountant' })
+  reply(@Request() req: ExpressRequest, @Body() dto: ClientPortalReplyDto) {
+    const { clientId, tenantId, isPreview } = this.user(req);
+    if (isPreview) throw new BadRequestException('Preview mode is read-only');
+    return this.portalService.replyFromClient(tenantId, clientId, dto);
   }
 
   @Get('messages/unread-count')

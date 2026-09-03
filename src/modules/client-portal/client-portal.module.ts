@@ -15,6 +15,7 @@ import { PortalJwtStrategy } from './strategies/portal-jwt.strategy';
 import { PortalJwtGuard } from './guards/portal-jwt.guard';
 import { HmrcModule } from '../hmrc/hmrc.module';
 import { MailModule } from '../mail/mail.module';
+import { AppNotificationsModule } from '../app-notifications/app-notifications.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { MailModule } from '../mail/mail.module';
     }),
     HmrcModule,
     MailModule,
+    AppNotificationsModule,
   ],
   controllers: [PortalAuthController, PortalController],
   providers: [PortalService, PortalJwtStrategy, PortalJwtGuard],

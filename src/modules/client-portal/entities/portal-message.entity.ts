@@ -25,6 +25,10 @@ export class PortalMessage extends BaseEntity {
   @Column({ name: 'body', type: 'text' })
   body: string;
 
+  /** Who sent the message: agent (accountant) or client (portal customer). */
+  @Column({ name: 'sender', type: 'varchar', length: 20, default: 'agent' })
+  sender: 'agent' | 'client';
+
   @Column({ name: 'read_at', type: 'datetime', nullable: true })
   readAt?: Date;
 }

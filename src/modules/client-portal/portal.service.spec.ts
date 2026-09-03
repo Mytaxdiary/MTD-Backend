@@ -12,6 +12,7 @@ import { Tenant } from '../tenants/entities/tenant.entity';
 import { HmrcService } from '../hmrc/hmrc.service';
 import { HmrcApiClient } from '../hmrc/hmrc-api.client';
 import { MailService } from '../mail/mail.service';
+import { AppNotificationsService } from '../app-notifications/app-notifications.service';
 import * as crypto from 'crypto';
 import * as cryptoHelper from '../../common/helpers/crypto.helper';
 
@@ -116,6 +117,10 @@ describe('PortalService — login()', () => {
         { provide: HmrcService, useValue: mockHmrcService },
         { provide: HmrcApiClient, useValue: mockHmrcApiClient },
         { provide: MailService, useValue: mockMailService },
+        {
+          provide: AppNotificationsService,
+          useValue: { create: jest.fn().mockResolvedValue({}) },
+        },
       ],
     }).compile();
 

@@ -101,7 +101,12 @@ export class ChaseService {
     const sortDir = query.sortDir ?? 'desc';
 
     let authorised = await this.clientRepo.find({
-      where: staffClientWhere(tenantId, actor, { authorisedAt: Not(IsNull()) }),
+      where: staffClientWhere(
+        tenantId,
+        actor,
+        { authorisedAt: Not(IsNull()) },
+        { excludePortalOnly: true },
+      ),
       order: { createdAt: 'ASC' },
     });
 

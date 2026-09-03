@@ -8,7 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull } from 'typeorm';
+import { Repository, IsNull, In } from 'typeorm';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -25,6 +25,12 @@ import type { PortalJwtPayload } from './strategies/portal-jwt.strategy';
 import type { PortalSetupDto } from './dto/portal-setup.dto';
 import type { PortalLoginDto } from './dto/portal-login.dto';
 import type { SendPortalMessageDto } from './dto/send-portal-message.dto';
+import type { ClientPortalReplyDto } from './dto/client-portal-reply.dto';
+import { AppNotificationsService } from '../app-notifications/app-notifications.service';
+import type {
+  BalanceAndTransactionsResponse,
+  HmrcAccountDocumentDetail,
+} from '../clients/hmrc-accounts.types';
 
 const UPLOAD_BASE_DIR = path.join(process.cwd(), 'uploads', 'portal-files');
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -46,6 +52,17 @@ const ALLOWED_MIME_TYPES = new Set([
 const PORTAL_COOKIE = 'mtd_cp_at';
 const SETUP_TOKEN_EXPIRY_DAYS = 7;
 const ACCESS_TOKEN_EXPIRY = '24h';
+
+export type PortalCustomerRow = {
+  id: string;
+  name: string;
+  email: string;
+  portalOnly: boolean;
+  portalActive: boolean;
+  invitedAt: string;
+  lastLoginAt: string | null;
+  setupPending: boolean;
+};
 
 /**
  * Produces a deterministic HMAC-SHA256 hex digest of a normalised email.
@@ -78,6 +95,7 @@ export class PortalService {
     private readonly hmrcService: HmrcService,
     private readonly hmrcApiClient: HmrcApiClient,
     private readonly mailService: MailService,
+    private readonly appNotificationsService: AppNotificationsService,
   ) {}
 
   // ── Invite / Setup ─────────────────────────────────────────────────────────
@@ -199,10 +217,12 @@ export class PortalService {
     const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
     return {
       name: client.name,
-      nino: client.nino,
+      nino: client.portalOnly ? undefined : client.nino,
       agentType: client.agentType,
       invitationStatus: client.invitationStatus,
       authorisedAt: client.authorisedAt,
+      portalOnly: !!client.portalOnly,
+      utr: client.utr,
       firmName: tenant?.firmName ?? '',
       firmEmail: tenant?.contactEmail ?? '',
     };
@@ -211,23 +231,67 @@ export class PortalService {
   async getObligations(clientId: string, tenantId: string) {
     const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
     if (!client) throw new NotFoundException('Client not found');
-    if (!client.authorisedAt) return { message: 'HMRC authorisation pending', obligations: [] };
+    if (!client.authorisedAt)
+      return { message: 'HMRC authorisation pending', obligations: [], businesses: [] };
 
     try {
       const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
       const baseUrl = this.configService.get<string>('hmrc.baseUrl')!;
-      const url = `${baseUrl}/obligations/details/${client.nino}/income-and-expenditure?status=Open`;
+      const url = `${baseUrl}/obligations/details/${client.nino}/income-and-expenditure`;
 
       const res = await this.hmrcApiClient.fetch(url, {
         accessToken,
         headers: { Accept: 'application/vnd.hmrc.3.0+json' },
       });
-      if (!res.ok) return { message: 'Could not load obligations from HMRC', obligations: [] };
-      const data = (await res.json()) as { obligations?: unknown[] };
-      return { obligations: data.obligations ?? [] };
+      if (!res.ok)
+        return {
+          message: 'Could not load obligations from HMRC',
+          obligations: [],
+          businesses: [],
+        };
+      const data = (await res.json()) as {
+        obligations?: Array<{
+          typeOfBusiness?: string;
+          businessId?: string;
+          obligationDetails?: Array<{
+            periodStartDate: string;
+            periodEndDate: string;
+            dueDate: string;
+            receivedDate?: string;
+            status: string;
+            periodKey?: string;
+          }>;
+          obligations?: Array<{
+            periodStartDate: string;
+            periodEndDate: string;
+            dueDate: string;
+            receivedDate?: string;
+            status: string;
+            periodKey?: string;
+          }>;
+        }>;
+      };
+      const raw = data.obligations ?? [];
+      const businesses = raw.map((group) => {
+        const periods = (group.obligationDetails ?? group.obligations ?? []).map((ob) => ({
+          periodStartDate: ob.periodStartDate,
+          periodEndDate: ob.periodEndDate,
+          dueDate: ob.dueDate,
+          receivedDate: ob.receivedDate,
+          status: this.normalizeObligationStatus(ob.status, ob.dueDate),
+          periodKey: ob.periodKey,
+        }));
+        return {
+          businessId: group.businessId ?? '',
+          typeOfBusiness: group.typeOfBusiness ?? 'Business',
+          label: this.businessLabel(group.typeOfBusiness, group.businessId),
+          periods,
+        };
+      });
+      return { obligations: raw, businesses };
     } catch (err) {
       this.logger.warn(`Portal obligations fetch failed: ${String(err)}`);
-      return { message: 'Could not load obligations', obligations: [] };
+      return { message: 'Could not load obligations', obligations: [], businesses: [] };
     }
   }
 
@@ -310,7 +374,13 @@ export class PortalService {
     const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
     if (!client) throw new NotFoundException('Client not found');
     if (!client.authorisedAt)
-      return { message: 'HMRC authorisation pending', balanceDetails: null };
+      return {
+        message: 'HMRC authorisation pending',
+        balanceDetails: null,
+        liabilities: [],
+        paymentDeadlines: { january: null, july: null },
+        paymentDetails: null,
+      };
 
     try {
       const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
@@ -321,11 +391,49 @@ export class PortalService {
         accessToken,
         headers: { Accept: 'application/vnd.hmrc.4.0+json' },
       });
-      if (!res.ok) return { message: 'Could not load liabilities from HMRC', balanceDetails: null };
-      return res.json();
+      if (!res.ok)
+        return {
+          message: 'Could not load liabilities from HMRC',
+          balanceDetails: null,
+          liabilities: [],
+          paymentDeadlines: { january: null, july: null },
+          paymentDetails: null,
+        };
+
+      const data = (await res.json()) as BalanceAndTransactionsResponse;
+      const docs = (data.documentDetails ?? []).filter((doc) => this.isLiabilityDocument(doc));
+      const liabilities = docs.map((doc) => this.mapLiabilityRow(doc));
+      const january = this.sumDeadlineGroup(liabilities, 1);
+      const july = this.sumDeadlineGroup(liabilities, 7);
+
+      return {
+        balanceDetails: data.balanceDetails ?? null,
+        documentDetails: data.documentDetails ?? [],
+        liabilities,
+        paymentDeadlines: {
+          january,
+          july,
+        },
+        paymentDetails: {
+          sortCode: '08-32-10',
+          accountNumber: '12001039',
+          reference: client.utr ? client.utr : 'Your 10-digit Unique Taxpayer Reference (UTR)',
+          hasUtr: !!client.utr,
+          amountDue:
+            data.balanceDetails?.totalBalance ?? data.balanceDetails?.payableAmount ?? null,
+          overdueAmount: data.balanceDetails?.overdueAmount ?? null,
+          payOnlineUrl: 'https://www.gov.uk/pay-self-assessment-tax-bill',
+        },
+      };
     } catch (err) {
       this.logger.warn(`Portal liabilities fetch failed: ${String(err)}`);
-      return { message: 'Could not load liabilities', balanceDetails: null };
+      return {
+        message: 'Could not load liabilities',
+        balanceDetails: null,
+        liabilities: [],
+        paymentDeadlines: { january: null, july: null },
+        paymentDetails: null,
+      };
     }
   }
 
@@ -334,15 +442,16 @@ export class PortalService {
   async getMessages(clientId: string) {
     return this.portalMsgRepo.find({
       where: { clientId },
-      order: { createdAt: 'DESC' },
-      take: 50,
+      order: { createdAt: 'ASC' },
+      take: 100,
     });
   }
 
   async markMessageRead(clientId: string, messageId: string) {
     const msg = await this.portalMsgRepo.findOne({ where: { id: messageId, clientId } });
     if (!msg) throw new NotFoundException('Message not found');
-    if (!msg.readAt) {
+    // Clients only mark accountant messages as read
+    if (msg.sender === 'agent' && !msg.readAt) {
       msg.readAt = new Date();
       await this.portalMsgRepo.save(msg);
     }
@@ -350,7 +459,9 @@ export class PortalService {
   }
 
   async getUnreadCount(clientId: string): Promise<number> {
-    return this.portalMsgRepo.count({ where: { clientId, readAt: IsNull() } });
+    return this.portalMsgRepo.count({
+      where: { clientId, sender: 'agent', readAt: IsNull() },
+    });
   }
 
   /** Called by the agent via POST /clients/:id/portal-message */
@@ -371,10 +482,10 @@ export class PortalService {
       clientId,
       subject: dto.subject,
       body: dto.body,
+      sender: 'agent',
     });
     await this.portalMsgRepo.save(msg);
 
-    // Email notification to client
     const frontendUrl =
       this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
     try {
@@ -394,6 +505,90 @@ export class PortalService {
     }
 
     return msg;
+  }
+
+  /** Client → accountant portal chat reply */
+  async replyFromClient(
+    tenantId: string,
+    clientId: string,
+    dto: ClientPortalReplyDto,
+  ): Promise<PortalMessage> {
+    const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
+    if (!client) throw new NotFoundException('Client not found');
+
+    const subject = (dto.subject ?? '').trim() || 'Message from portal';
+    const body = dto.body.trim();
+    if (!body) throw new BadRequestException('Message cannot be empty');
+
+    const msg = this.portalMsgRepo.create({
+      tenantId,
+      clientId,
+      subject,
+      body,
+      sender: 'client',
+      readAt: undefined,
+    });
+    await this.portalMsgRepo.save(msg);
+
+    const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
+    const firmName = tenant?.firmName ?? 'Your firm';
+    const agentEmail = tenant?.contactEmail;
+    const frontendUrl =
+      this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+    const clientDetailUrl = `${frontendUrl}/clients/detail?id=${clientId}`;
+
+    void this.appNotificationsService
+      .create({
+        tenantId,
+        type: 'portal_chat',
+        title: `Portal message from ${client.name}`,
+        body: body.length > 120 ? `${body.slice(0, 117)}...` : body,
+        clientId,
+      })
+      .catch((err) => this.logger.warn(`Portal chat notification failed: ${String(err)}`));
+
+    if (agentEmail) {
+      void this.mailService
+        .sendPortalClientReply(agentEmail, {
+          agentName: tenant?.contactName ?? 'there',
+          clientName: client.name,
+          firmName,
+          subject,
+          body,
+          clientDetailUrl,
+        })
+        .catch((err) => this.logger.warn(`Portal client reply email failed: ${String(err)}`));
+    }
+
+    return msg;
+  }
+
+  /** Agent — list full portal chat for a client (oldest first). */
+  async getMessagesForAgent(tenantId: string, clientId: string): Promise<PortalMessage[]> {
+    const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
+    if (!client) throw new NotFoundException('Client not found');
+    return this.portalMsgRepo.find({
+      where: { tenantId, clientId },
+      order: { createdAt: 'ASC' },
+      take: 100,
+    });
+  }
+
+  /** Agent marks client messages as read when opening chat. */
+  async markClientMessagesRead(tenantId: string, clientId: string): Promise<void> {
+    await this.portalMsgRepo
+      .createQueryBuilder()
+      .update(PortalMessage)
+      .set({ readAt: new Date() })
+      .where(
+        'tenant_id = :tenantId AND client_id = :clientId AND sender = :sender AND read_at IS NULL',
+        {
+          tenantId,
+          clientId,
+          sender: 'client',
+        },
+      )
+      .execute();
   }
 
   // ── File drop ──────────────────────────────────────────────────────────────
@@ -550,6 +745,109 @@ export class PortalService {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
+  private businessLabel(typeOfBusiness?: string, businessId?: string): string {
+    const type = (typeOfBusiness ?? '').toLowerCase();
+    let name = 'Business';
+    if (type.includes('self-employment') || type === 'self-employment') name = 'Self-employment';
+    else if (type.includes('uk-property') || type === 'uk-property') name = 'UK property';
+    else if (type.includes('foreign-property')) name = 'Foreign property';
+    else if (typeOfBusiness) name = typeOfBusiness;
+    const shortId = businessId ? ` (${businessId.slice(-6)})` : '';
+    return `${name}${shortId}`;
+  }
+
+  private normalizeObligationStatus(status: string, dueDate?: string): string {
+    const s = (status ?? '').trim();
+    if (/fulfilled|submitted|complete/i.test(s)) return 'Submitted';
+    if (/overdue/i.test(s)) return 'Overdue';
+    if (dueDate) {
+      const due = new Date(dueDate);
+      due.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (due < today && /open|pending/i.test(s)) return 'Overdue';
+    }
+    if (/open|pending/i.test(s)) return 'Pending';
+    return s || 'Pending';
+  }
+
+  private isLiabilityDocument(doc: HmrcAccountDocumentDetail): boolean {
+    const desc = doc.documentDescription ?? '';
+    if (['Payment', 'Repayment', 'Clearing Document'].includes(desc)) return false;
+    if (doc.creditReason && !doc.documentDescription) return false;
+    const original = doc.originalAmount ?? 0;
+    const outstanding = doc.outstandingAmount ?? 0;
+    return original > 0 || outstanding > 0;
+  }
+
+  private mapLiabilityRow(doc: HmrcAccountDocumentDetail) {
+    const chargeType = doc.documentDescription ?? doc.documentText ?? '';
+    let label = doc.documentText ?? doc.documentDescription ?? 'Charge';
+    if (chargeType === 'ITSA- POA 1')
+      label = `1st payment on account${doc.taxYear ? ` ${doc.taxYear}` : ''}`;
+    else if (chargeType === 'ITSA - POA 2')
+      label = `2nd payment on account${doc.taxYear ? ` ${doc.taxYear}` : ''}`;
+    else if (chargeType === 'ITSA- Bal Charge')
+      label = `Balancing payment${doc.taxYear ? ` ${doc.taxYear}` : ''}`;
+
+    const outstanding = doc.outstandingAmount ?? 0;
+    let status: 'paid' | 'upcoming' | 'overdue' = 'upcoming';
+    if (outstanding <= 0) status = 'paid';
+    else if (doc.documentDueDate) {
+      const due = new Date(doc.documentDueDate);
+      due.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      status = due < today ? 'overdue' : 'upcoming';
+    }
+
+    const dueMonth = doc.documentDueDate ? new Date(doc.documentDueDate).getUTCMonth() + 1 : null;
+    let deadline: 'january' | 'july' | 'other' = 'other';
+    if (dueMonth === 1 || chargeType === 'ITSA- POA 1' || chargeType === 'ITSA- Bal Charge') {
+      deadline = 'january';
+    } else if (dueMonth === 7 || chargeType === 'ITSA - POA 2') {
+      deadline = 'july';
+    }
+
+    return {
+      documentId: doc.documentId,
+      taxYear: doc.taxYear,
+      label,
+      dueDate: doc.documentDueDate ?? null,
+      outstandingAmount: outstanding,
+      originalAmount: doc.originalAmount ?? null,
+      status,
+      deadline,
+    };
+  }
+
+  private sumDeadlineGroup(
+    rows: Array<{
+      deadline: 'january' | 'july' | 'other';
+      outstandingAmount: number;
+      label: string;
+      dueDate: string | null;
+      status: string;
+      taxYear?: string;
+    }>,
+    month: 1 | 7,
+  ) {
+    const key = month === 1 ? 'january' : 'july';
+    const items = rows.filter((r) => r.deadline === key && r.outstandingAmount > 0);
+    if (items.length === 0) {
+      return {
+        label: month === 1 ? '31 January' : '31 July',
+        amount: 0,
+        items: [] as typeof items,
+      };
+    }
+    return {
+      label: month === 1 ? '31 January' : '31 July',
+      amount: items.reduce((sum, r) => sum + r.outstandingAmount, 0),
+      items,
+    };
+  }
+
   private signToken(cu: ClientUser): string {
     const payload: PortalJwtPayload = {
       sub: cu.id,
@@ -562,6 +860,80 @@ export class PortalService {
 
   cookieName(): string {
     return PORTAL_COOKIE;
+  }
+
+  /** Whether this email already has a portal account in the firm. */
+  async isPortalEmailInUse(tenantId: string, email: string): Promise<boolean> {
+    const digest = hashEmail(email, this.emailHashSecret());
+    const existing = await this.clientUserRepo.findOne({ where: { tenantId, emailHash: digest } });
+    return !!existing;
+  }
+
+  /** Portal customers visible to the actor (owner: all; staff: assigned only). */
+  async listCustomers(
+    tenantId: string,
+    actor?: { role?: string; userId?: string } | null,
+  ): Promise<PortalCustomerRow[]> {
+    const users = await this.clientUserRepo.find({
+      where: { tenantId },
+      order: { createdAt: 'DESC' },
+    });
+    if (users.length === 0) return [];
+
+    const clientIds = users.map((u) => u.clientId);
+    const clients = await this.clientRepo.find({ where: { tenantId, id: In(clientIds) } });
+    const clientMap = new Map(clients.map((c) => [c.id, c]));
+
+    const rows: PortalCustomerRow[] = [];
+    for (const cu of users) {
+      const client = clientMap.get(cu.clientId);
+      if (!client || client.deletedAt) continue;
+      if (actor?.role === 'staff' && actor.userId && client.assignedToUserId !== actor.userId) {
+        continue;
+      }
+
+      const setupPending =
+        !cu.isActive &&
+        !!cu.portalSetupToken &&
+        (!cu.portalSetupTokenExpiresAt || cu.portalSetupTokenExpiresAt >= new Date());
+
+      rows.push({
+        id: client.id,
+        name: client.name,
+        email: cu.email,
+        portalOnly: !!client.portalOnly,
+        portalActive: cu.isActive,
+        invitedAt: cu.createdAt.toISOString(),
+        lastLoginAt: cu.lastLoginAt?.toISOString() ?? null,
+        setupPending,
+      });
+    }
+    return rows;
+  }
+
+  /** Remove portal access. Deletes portal-only customers entirely. */
+  async revokeAccess(
+    tenantId: string,
+    client: Client,
+    actor?: { role?: string; userId?: string } | null,
+  ): Promise<{ message: string }> {
+    if (actor?.role === 'staff' && actor.userId && client.assignedToUserId !== actor.userId) {
+      throw new NotFoundException('Client not found');
+    }
+
+    const cu = await this.clientUserRepo.findOne({ where: { tenantId, clientId: client.id } });
+    if (!cu) {
+      throw new NotFoundException('This customer does not have portal access.');
+    }
+
+    await this.clientUserRepo.remove(cu);
+
+    if (client.portalOnly) {
+      await this.clientRepo.softRemove(client);
+      return { message: 'Portal customer removed.' };
+    }
+
+    return { message: 'Portal access removed. You can send a new invite from the client record.' };
   }
 
   /**

@@ -125,4 +125,8 @@ export class Client extends BaseEntity {
   /** Staff member this client is assigned to. Null = unassigned (owner-only). */
   @Column({ name: 'assigned_to_user_id', type: 'varchar', length: 36, nullable: true })
   assignedToUserId?: string | null;
+
+  /** Portal-only customer — no HMRC authorisation; hidden from the main client list. */
+  @Column({ name: 'portal_only', type: 'boolean', default: false })
+  portalOnly: boolean;
 }
