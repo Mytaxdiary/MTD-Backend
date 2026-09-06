@@ -30,9 +30,10 @@ export function isPublicIpv4(ip: string): boolean {
   return true;
 }
 
+/** Client TCP port: 1–65535, not server ports 80/443 (HMRC WEB_APP_VIA_SERVER rule). */
 export function isValidPublicPort(port: string): boolean {
   const n = Number(port);
-  return Number.isInteger(n) && n >= 1 && n <= 65535;
+  return Number.isInteger(n) && n >= 1 && n <= 65535 && n !== 80 && n !== 443;
 }
 
 /** HMRC expects key=value pairs separated by &. */

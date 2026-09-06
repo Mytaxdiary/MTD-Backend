@@ -13,9 +13,12 @@ import { HmrcConnection } from './entities/hmrc-connection.entity';
 import { encrypt, decrypt, isEncrypted } from './crypto.util';
 import { HmrcApiClient } from './hmrc-api.client';
 import type {
+  FraudFeedbackApiId,
+  FraudPreventionFeedbackResult,
   FraudPreventionValidationResult,
   HmrcFraudRequestContext,
 } from './fraud-prevention.types';
+import { FRAUD_FEEDBACK_API_IDS } from './fraud-prevention.types';
 import type {
   HmrcSandboxAgentUser,
   HmrcSandboxIndividualRaw,
@@ -248,6 +251,61 @@ export class HmrcService {
       this.logger.warn(`HMRC fraud validator HTTP ${response.status}: ${text}`);
       throw new BadRequestException(
         body.message ?? `HMRC fraud header validation failed (${response.status}).`,
+      );
+    }
+
+    return body;
+  }
+
+  /**
+   * Feedback on the last sandbox request to each endpoint of a supported API.
+   * Call real MTD endpoints from the app first, then use this.
+   * https://developer.service.hmrc.gov.uk/api-documentation/docs/api/service/txm-fph-validator-api/1.0
+   */
+  async getFraudValidationFeedback(
+    tenantId: string,
+    api: FraudFeedbackApiId,
+  ): Promise<FraudPreventionFeedbackResult> {
+    const allowed = new Set<string>(FRAUD_FEEDBACK_API_IDS);
+    if (!allowed.has(api)) {
+      throw new BadRequestException(`Unsupported fraud feedback API id: ${api}`);
+    }
+
+    const baseUrl = this.configService.get<string>('hmrc.baseUrl');
+    if (!baseUrl) {
+      throw new InternalServerErrorException('HMRC_BASE_URL is not configured.');
+    }
+
+    const accessToken = await this.getValidAccessToken(tenantId);
+    const qs = new URLSearchParams({ connectionMethod: 'WEB_APP_VIA_SERVER' });
+    const url = `${baseUrl}/test/fraud-prevention-headers/${encodeURIComponent(api)}/validation-feedback?${qs}`;
+
+    let response: Response;
+    try {
+      response = await this.hmrcApiClient.fetch(url, {
+        method: 'GET',
+        accessToken,
+        headers: { Accept: 'application/vnd.hmrc.1.0+json' },
+      });
+    } catch (err) {
+      this.logger.error('HMRC fraud validation-feedback network error', err);
+      throw new InternalServerErrorException('Failed to contact HMRC fraud validation-feedback.');
+    }
+
+    const text = await response.text();
+    let body: FraudPreventionFeedbackResult;
+    try {
+      body = text ? (JSON.parse(text) as FraudPreventionFeedbackResult) : { requests: [] };
+    } catch {
+      throw new InternalServerErrorException(
+        `HMRC fraud validation-feedback returned non-JSON (${response.status}).`,
+      );
+    }
+
+    if (!response.ok) {
+      this.logger.warn(`HMRC fraud validation-feedback HTTP ${response.status}: ${text}`);
+      throw new BadRequestException(
+        body.message ?? `HMRC fraud validation-feedback failed (${response.status}).`,
       );
     }
 

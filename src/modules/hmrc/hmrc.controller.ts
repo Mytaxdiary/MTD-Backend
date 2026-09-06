@@ -5,9 +5,11 @@ import {
   Patch,
   Delete,
   Body,
+  Query,
   UseGuards,
   Request,
   NotFoundException,
+  BadRequestException,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -20,7 +22,11 @@ import { HmrcService } from './hmrc.service';
 import { ExchangeCodeDto } from './dto/exchange-code.dto';
 import { UpdateArnDto } from './dto/update-arn.dto';
 import { buildHmrcFraudRequestContext } from './fraud-prevention.parser';
-import { summarizeFraudValidation } from './fraud-prevention.validation.util';
+import {
+  summarizeFraudFeedback,
+  summarizeFraudValidation,
+} from './fraud-prevention.validation.util';
+import { FRAUD_FEEDBACK_API_IDS, type FraudFeedbackApiId } from './fraud-prevention.types';
 
 @ApiTags('HMRC')
 @ApiBearerAuth('access-token')
@@ -123,6 +129,25 @@ export class HmrcController {
     const result = await this.hmrcService.validateFraudHeaders(tenantId, fraudContext);
     const summary = summarizeFraudValidation(result);
     return { ...summary, ...result };
+  }
+
+  /**
+   * Feedback on the last sandbox request to each endpoint of a supported API
+   * (e.g. obligations-mtd). Call that API from the app first.
+   */
+  @Get('fraud-validation-feedback')
+  @ApiOperation({
+    summary: 'Get HMRC validation-feedback for the last requests to a supported MTD API',
+  })
+  async getFraudValidationFeedback(@Request() req: ExpressRequest, @Query('api') api?: string) {
+    const tenantId = this.getTenantId(req);
+    const apiId = (api?.trim() || 'obligations-mtd') as FraudFeedbackApiId;
+    if (!(FRAUD_FEEDBACK_API_IDS as readonly string[]).includes(apiId)) {
+      throw new BadRequestException(`api must be one of: ${FRAUD_FEEDBACK_API_IDS.join(', ')}`);
+    }
+    const result = await this.hmrcService.getFraudValidationFeedback(tenantId, apiId);
+    const summary = summarizeFraudFeedback(result);
+    return { api: apiId, ...summary, ...result };
   }
 
   /** Returns current HMRC connection status for this firm. */

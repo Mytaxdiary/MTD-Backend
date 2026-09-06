@@ -46,3 +46,37 @@ export interface FraudPreventionValidationResult {
   errors?: unknown[];
   warnings?: unknown[];
 }
+
+/** HMRC validation-feedback response (last request per endpoint of an API). */
+export interface FraudPreventionFeedbackRequest {
+  path?: string;
+  method?: string;
+  requestTimestamp?: string;
+  code?: string;
+  headers?: Array<{
+    header: string;
+    value?: string;
+    code?: string;
+    errors?: unknown[];
+    warnings?: unknown[];
+  }>;
+  crossValidation?: unknown[];
+}
+
+export interface FraudPreventionFeedbackResult {
+  requests?: FraudPreventionFeedbackRequest[];
+  code?: string;
+  message?: string;
+}
+
+/** API identifiers accepted by Test Fraud Prevention Headers validation-feedback. */
+export const FRAUD_FEEDBACK_API_IDS = [
+  'obligations-mtd',
+  'business-details-mtd',
+  'property-business-mtd',
+  'self-employment-business-mtd',
+  'self-assessment-accounts-mtd',
+  'self-assessment-individual-details-mtd',
+] as const;
+
+export type FraudFeedbackApiId = (typeof FRAUD_FEEDBACK_API_IDS)[number];
