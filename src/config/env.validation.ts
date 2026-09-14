@@ -31,6 +31,7 @@ export const envValidationSchema = Joi.object({
   MAIL_PASS: Joi.string().optional(),
   MAIL_FROM: Joi.string().email().optional(),
   MAIL_FROM_NAME: Joi.string().optional(),
+  ENQUIRY_NOTIFY_EMAIL: Joi.string().email().optional(),
 
   // Auto-chase cron (emails clients daily at 08:00 UTC). Opt-in.
   CHASE_CRON_ENABLED: Joi.string().valid('true', 'false').default('false'),

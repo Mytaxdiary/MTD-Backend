@@ -46,6 +46,11 @@ import {
   type DeletionCancelledEmailData,
 } from './templates/deletion-cancelled.template';
 import { staffInviteTemplate, staffInvitePlainText } from './templates/staff-invite.template';
+import {
+  enquiryAlertTemplate,
+  enquiryAlertPlainText,
+  type EnquiryAlertEmailData,
+} from './templates/enquiry-alert.template';
 import { EmailConnectionsService } from '../email-connections/email-connections.service';
 
 export type ClientMailSendMeta = {
@@ -115,6 +120,15 @@ export class MailService {
       'Welcome to My Tax Diary',
       welcomeTemplate(firstName, this.loginUrl),
       `Hi ${firstName},\n\nYour My Tax Diary account is ready. Sign in at:\n${this.loginUrl}\n\nThe My Tax Diary team`,
+    );
+  }
+
+  async sendEnquiryAlertEmail(to: string, data: EnquiryAlertEmailData): Promise<void> {
+    await this.send(
+      to,
+      `New enquiry from ${data.firm}`,
+      enquiryAlertTemplate(data),
+      enquiryAlertPlainText(data),
     );
   }
 

@@ -25,6 +25,7 @@ import { ClientPortalModule } from './modules/client-portal/client-portal.module
 import { AccountModule } from './modules/account/account.module';
 import { EmailConnectionsModule } from './modules/email-connections/email-connections.module';
 import { TeamModule } from './modules/team/team.module';
+import { EnquiriesModule } from './modules/enquiries/enquiries.module';
 import hmrcConfig from './config/hmrc.config';
 import emailConfig from './config/email.config';
 
@@ -84,6 +85,7 @@ import emailConfig from './config/email.config';
     ClientPortalModule,
     AccountModule,
     TeamModule,
+    EnquiriesModule,
   ],
   controllers: [AppController],
   providers: [

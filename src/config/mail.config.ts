@@ -8,4 +8,5 @@ export default registerAs('mail', () => ({
   pass: process.env.MAIL_PASS,
   from: process.env.MAIL_FROM || 'noreply@mtditsa.co.uk',
   fromName: process.env.MAIL_FROM_NAME || 'My Tax Diary',
+  enquiryNotifyEmail: process.env.ENQUIRY_NOTIFY_EMAIL || 'info@mytaxdiary.co.uk',
 }));
