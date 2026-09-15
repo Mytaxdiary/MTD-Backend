@@ -44,6 +44,7 @@ import { GetPaymentsAndAllocationsQueryDto } from './dto/get-payments-and-alloca
 import { GetIncomeSummaryQueryDto } from './dto/get-income-summary-query.dto';
 import { CreateSeCumulativeDto } from './dto/create-se-cumulative.dto';
 import { CreateUkPropertyCumulativeDto } from './dto/create-uk-property-cumulative.dto';
+import { UpsertCodingOutDto } from './dto/upsert-coding-out.dto';
 import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
 import type { RequestUser } from '../auth/strategies/jwt.strategy';
 import { AssignClientDto } from './dto/assign-client.dto';
@@ -455,6 +456,113 @@ export class ClientsController {
       transactionId,
       this.fraudContext(req),
     );
+  }
+
+  /** Coding Out Status — retrieve (register before :taxYear retrieve) */
+  @Get(':id/liabilities/coding-out/:taxYear/status')
+  @RequirePermission('canViewLiabilities')
+  @ApiOperation({ summary: 'Retrieve HMRC coding out opt-in/opt-out status' })
+  async getCodingOutStatus(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('taxYear') taxYear: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getCodingOutStatus(tenantId, id, taxYear, this.fraudContext(req));
+  }
+
+  /** Coding Out Status — opt out */
+  @Post(':id/liabilities/coding-out/:taxYear/opt-out')
+  @RequirePermission('canViewLiabilities')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Opt client out of HMRC coding out for a tax year' })
+  async optOutOfCodingOut(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('taxYear') taxYear: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.optOutOfCodingOut(tenantId, id, taxYear, this.fraudContext(req));
+  }
+
+  /** Coding Out Status — opt in */
+  @Post(':id/liabilities/coding-out/:taxYear/opt-in')
+  @RequirePermission('canViewLiabilities')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Opt client in to HMRC coding out for a tax year' })
+  async optInToCodingOut(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('taxYear') taxYear: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.optInToCodingOut(tenantId, id, taxYear, this.fraudContext(req));
+  }
+
+  /** Coding Out Underpayments and Debts — retrieve */
+  @Get(':id/liabilities/coding-out/:taxYear')
+  @RequirePermission('canViewLiabilities')
+  @ApiOperation({ summary: 'Retrieve HMRC coding out underpayments and debts' })
+  async getCodingOutUnderpayments(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('taxYear') taxYear: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getCodingOutUnderpayments(
+      tenantId,
+      id,
+      taxYear,
+      this.fraudContext(req),
+    );
+  }
+
+  /** Coding Out Underpayments and Debts — create or amend */
+  @Put(':id/liabilities/coding-out/:taxYear')
+  @RequirePermission('canViewLiabilities')
+  @ApiOperation({ summary: 'Create or amend HMRC coding out underpayments and debts' })
+  async upsertCodingOutUnderpayments(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('taxYear') taxYear: string,
+    @Body() dto: UpsertCodingOutDto,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.upsertCodingOutUnderpayments(
+      tenantId,
+      id,
+      taxYear,
+      dto,
+      this.fraudContext(req),
+    );
+  }
+
+  /** Coding Out Underpayments and Debts — delete user-submitted amounts */
+  @Delete(':id/liabilities/coding-out/:taxYear')
+  @RequirePermission('canViewLiabilities')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Delete HMRC coding out underpayments and debts' })
+  async deleteCodingOutUnderpayments(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Param('taxYear') taxYear: string,
+  ) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.deleteCodingOutUnderpayments(
+      tenantId,
+      id,
+      taxYear,
+      this.fraudContext(req),
+    );
+  }
+
+  /** ITSA Penalties — retrieve */
+  @Get(':id/liabilities/penalties')
+  @RequirePermission('canViewLiabilities')
+  @ApiOperation({ summary: 'Retrieve HMRC ITSA penalties for a client' })
+  async getItsaPenalties(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const { tenantId } = req.user as RequestUser;
+    return this.clientsService.getItsaPenalties(tenantId, id, this.fraudContext(req));
   }
 
   /**

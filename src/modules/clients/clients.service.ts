@@ -56,7 +56,14 @@ import { defaultPaymentsDateRange } from './dto/get-payments-and-allocations-que
 import {
   accountsErrorToUserMessage,
   chargeHistoryErrorToUserMessage,
+  codingOutErrorToUserMessage,
 } from './hmrc-accounts-errors.util';
+import type {
+  CodingOutStatusResponse,
+  CodingOutUnderpaymentsResponse,
+  ItsaPenaltiesResponse,
+} from './hmrc-coding-out.types';
+import type { UpsertCodingOutDto } from './dto/upsert-coding-out.dto';
 import type { BissResponse, IncomeSummaryResponse } from './hmrc-biss.types';
 import type {
   SeCumulativeSummaryResponse,
@@ -1119,6 +1126,252 @@ export class ClientsService {
     return { chargeHistoryDetails: data.chargeHistoryDetails ?? [] };
   }
 
+  /**
+   * Coding Out Underpayments and Debts — retrieve.
+   * GET /accounts/self-assessment/{nino}/{taxYear}/collection/tax-code
+   */
+  async getCodingOutUnderpayments(
+    tenantId: string,
+    clientId: string,
+    taxYear: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<CodingOutUnderpaymentsResponse> {
+    const year = this.assertCodingOutTaxYear(taxYear);
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const url = this.codingOutTaxCodeUrl(client.nino, year);
+
+    return this.fetchHmrcAccountsJson<CodingOutUnderpaymentsResponse>(
+      url,
+      accessToken,
+      fraudContext,
+      codingOutErrorToUserMessage,
+    );
+  }
+
+  /**
+   * Coding Out Underpayments and Debts — create or amend.
+   * PUT /accounts/self-assessment/{nino}/{taxYear}/collection/tax-code
+   */
+  async upsertCodingOutUnderpayments(
+    tenantId: string,
+    clientId: string,
+    taxYear: string,
+    dto: UpsertCodingOutDto,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<CodingOutUnderpaymentsResponse> {
+    const year = this.assertCodingOutTaxYear(taxYear);
+    const components = dto.taxCodeComponents ?? {};
+    const hasAny =
+      (components.payeUnderpayment?.length ?? 0) > 0 ||
+      (components.selfAssessmentUnderpayment?.length ?? 0) > 0 ||
+      (components.debt?.length ?? 0) > 0 ||
+      components.inYearAdjustment != null;
+    if (!hasAny) {
+      throw new BadRequestException(
+        'Provide at least one coding out amount (PAYE underpayment, SA underpayment, debt, or in-year adjustment).',
+      );
+    }
+
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const url = this.codingOutTaxCodeUrl(client.nino, year);
+    const body = {
+      taxCodeComponents: {
+        ...(components.payeUnderpayment?.length
+          ? {
+              payeUnderpayment: components.payeUnderpayment.map((i) => ({
+                id: i.id,
+                amount: i.amount,
+              })),
+            }
+          : {}),
+        ...(components.selfAssessmentUnderpayment?.length
+          ? {
+              selfAssessmentUnderpayment: components.selfAssessmentUnderpayment.map((i) => ({
+                id: i.id,
+                amount: i.amount,
+              })),
+            }
+          : {}),
+        ...(components.debt?.length
+          ? {
+              debt: components.debt.map((i) => ({
+                id: i.id,
+                amount: i.amount,
+              })),
+            }
+          : {}),
+        ...(components.inYearAdjustment
+          ? {
+              inYearAdjustment: {
+                id: components.inYearAdjustment.id,
+                amount: components.inYearAdjustment.amount,
+              },
+            }
+          : {}),
+      },
+    };
+
+    await this.fetchHmrcAccountsJson<Record<string, never>>(
+      url,
+      accessToken,
+      fraudContext,
+      codingOutErrorToUserMessage,
+      {
+        method: 'PUT',
+        body,
+        stateful: true,
+        emptyOk: true,
+      },
+    );
+
+    return this.getCodingOutUnderpayments(tenantId, clientId, year, fraudContext);
+  }
+
+  /**
+   * Coding Out Underpayments and Debts — delete user-submitted amounts.
+   * DELETE /accounts/self-assessment/{nino}/{taxYear}/collection/tax-code
+   */
+  async deleteCodingOutUnderpayments(
+    tenantId: string,
+    clientId: string,
+    taxYear: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<{ deleted: true }> {
+    const year = this.assertCodingOutTaxYear(taxYear);
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const url = this.codingOutTaxCodeUrl(client.nino, year);
+
+    await this.fetchHmrcAccountsJson<Record<string, never>>(
+      url,
+      accessToken,
+      fraudContext,
+      codingOutErrorToUserMessage,
+      { method: 'DELETE', stateful: true, emptyOk: true },
+    );
+
+    return { deleted: true };
+  }
+
+  /**
+   * Retrieve Coding Out Status.
+   * GET .../collection/tax-code/coding-out/status
+   */
+  async getCodingOutStatus(
+    tenantId: string,
+    clientId: string,
+    taxYear: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<CodingOutStatusResponse> {
+    const year = this.assertCodingOutTaxYear(taxYear);
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const url = `${this.codingOutTaxCodeUrl(client.nino, year)}/coding-out/status`;
+
+    return this.fetchHmrcAccountsJson<CodingOutStatusResponse>(
+      url,
+      accessToken,
+      fraudContext,
+      codingOutErrorToUserMessage,
+    );
+  }
+
+  /**
+   * Opt Out of Coding Out.
+   * POST .../collection/tax-code/coding-out/opt-out
+   */
+  async optOutOfCodingOut(
+    tenantId: string,
+    clientId: string,
+    taxYear: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<CodingOutStatusResponse> {
+    return this.postCodingOutOpt(tenantId, clientId, taxYear, 'opt-out', fraudContext);
+  }
+
+  /**
+   * Opt In to Coding Out.
+   * POST .../collection/tax-code/coding-out/opt-in
+   */
+  async optInToCodingOut(
+    tenantId: string,
+    clientId: string,
+    taxYear: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<CodingOutStatusResponse> {
+    return this.postCodingOutOpt(tenantId, clientId, taxYear, 'opt-in', fraudContext);
+  }
+
+  /**
+   * Retrieve ITSA Penalties.
+   * GET /accounts/self-assessment/{nino}/penalties
+   */
+  async getItsaPenalties(
+    tenantId: string,
+    clientId: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<ItsaPenaltiesResponse> {
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const url =
+      `${this.hmrcBaseUrl}/accounts/self-assessment/` +
+      `${encodeURIComponent(client.nino)}/penalties`;
+
+    return this.fetchHmrcAccountsJson<ItsaPenaltiesResponse>(
+      url,
+      accessToken,
+      fraudContext,
+      codingOutErrorToUserMessage,
+    );
+  }
+
+  private async postCodingOutOpt(
+    tenantId: string,
+    clientId: string,
+    taxYear: string,
+    action: 'opt-out' | 'opt-in',
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<CodingOutStatusResponse> {
+    const year = this.assertCodingOutTaxYear(taxYear);
+    const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
+    const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
+    const url = `${this.codingOutTaxCodeUrl(client.nino, year)}/coding-out/${action}`;
+
+    await this.fetchHmrcAccountsJson<Record<string, never>>(
+      url,
+      accessToken,
+      fraudContext,
+      codingOutErrorToUserMessage,
+      { method: 'POST', stateful: true, emptyOk: true },
+    );
+
+    return this.getCodingOutStatus(tenantId, clientId, year, fraudContext);
+  }
+
+  private codingOutTaxCodeUrl(nino: string, taxYear: string): string {
+    return (
+      `${this.hmrcBaseUrl}/accounts/self-assessment/` +
+      `${encodeURIComponent(nino)}/${encodeURIComponent(taxYear)}/collection/tax-code`
+    );
+  }
+
+  private assertCodingOutTaxYear(taxYear: string): string {
+    const year = (taxYear ?? '').trim();
+    if (!/^2[0-9]{3}-[0-9]{2}$/.test(year)) {
+      throw new BadRequestException(
+        'Tax year must be in the format YYYY-YY (for example 2024-25).',
+      );
+    }
+    const start = Number(year.slice(0, 4));
+    const end = Number(year.slice(5, 7));
+    if (end !== (start + 1) % 100) {
+      throw new BadRequestException('Tax year end must be the year after the start year.');
+    }
+    return year;
+  }
+
   // ─── Private helpers ──────────────────────────────────────────────────────
 
   private async fetchHmrcAccountsJson<T>(
@@ -1126,27 +1379,45 @@ export class ClientsService {
     accessToken: string,
     fraudContext: HmrcFraudRequestContext | null | undefined,
     mapError: (status: number, text: string) => string = accountsErrorToUserMessage,
+    options?: {
+      method?: 'GET' | 'PUT' | 'POST' | 'DELETE';
+      body?: unknown;
+      stateful?: boolean;
+      emptyOk?: boolean;
+    },
   ): Promise<T> {
+    const method = options?.method ?? 'GET';
     let res: Response;
     try {
       res = await this.hmrcApiClient.fetch(url, {
+        method,
         accessToken,
         fraudContext,
-        headers: { Accept: 'application/vnd.hmrc.4.0+json' },
+        headers: {
+          Accept: 'application/vnd.hmrc.4.0+json',
+          ...(options?.body != null ? { 'Content-Type': 'application/json' } : {}),
+          ...(options?.stateful ? this.sandboxStatefulHeaders() : {}),
+        },
+        ...(options?.body != null ? { body: JSON.stringify(options.body) } : {}),
       });
     } catch (err) {
-      this.logger.error(`HMRC SA accounts network error: ${url}`, err);
+      this.logger.error(`HMRC SA accounts network error: ${method} ${url}`, err);
       throw new InternalServerErrorException('Failed to contact HMRC for account transactions.');
     }
 
     const text = await res.text();
     if (!res.ok) {
-      this.logger.warn(`HMRC SA accounts ${res.status}: ${text}`);
+      this.logger.warn(`HMRC SA accounts ${method} ${res.status}: ${text}`);
       throw new BadRequestException(mapError(res.status, text));
     }
 
+    if (!text || res.status === 204) {
+      if (options?.emptyOk) return {} as T;
+      return {} as T;
+    }
+
     try {
-      return text ? (JSON.parse(text) as T) : ({} as T);
+      return JSON.parse(text) as T;
     } catch {
       throw new InternalServerErrorException(
         'HMRC returned invalid JSON for account transactions.',
