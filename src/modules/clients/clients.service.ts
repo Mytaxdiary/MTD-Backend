@@ -1146,6 +1146,8 @@ export class ClientsService {
       accessToken,
       fraudContext,
       codingOutErrorToUserMessage,
+      // Sandbox: same STATEFUL store as PUT/DELETE so retrieve matches writes
+      // { stateful: true },
     );
   }
 
@@ -1173,43 +1175,55 @@ export class ClientsService {
       );
     }
 
+    const usedIds = new Set<number>();
+    const nextUniqueId = (): number => {
+      let id = Date.now() % 1_000_000_000_000;
+      while (usedIds.has(id) || id < 1) {
+        id = (id + 1) % 1_000_000_000_000 || 1;
+      }
+      usedIds.add(id);
+      return id;
+    };
+    const takeUniqueId = (id: number): number => {
+      if (!Number.isInteger(id) || id < 1) {
+        throw new BadRequestException('Each coding out id must be a whole number of at least 1.');
+      }
+      if (usedIds.has(id)) {
+        // Sandbox stubs often reuse the same id across component types; HMRC rejects duplicates.
+        return nextUniqueId();
+      }
+      usedIds.add(id);
+      return id;
+    };
+
+    const payeUnderpayment = components.payeUnderpayment?.map((i) => ({
+      id: takeUniqueId(i.id),
+      amount: i.amount,
+    }));
+    const selfAssessmentUnderpayment = components.selfAssessmentUnderpayment?.map((i) => ({
+      id: takeUniqueId(i.id),
+      amount: i.amount,
+    }));
+    const debt = components.debt?.map((i) => ({
+      id: takeUniqueId(i.id),
+      amount: i.amount,
+    }));
+    const inYearAdjustment = components.inYearAdjustment
+      ? {
+          id: takeUniqueId(components.inYearAdjustment.id),
+          amount: components.inYearAdjustment.amount,
+        }
+      : undefined;
+
     const client = await this.ensureClientAuthorisedForMtd(tenantId, clientId, fraudContext);
     const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
     const url = this.codingOutTaxCodeUrl(client.nino, year);
     const body = {
       taxCodeComponents: {
-        ...(components.payeUnderpayment?.length
-          ? {
-              payeUnderpayment: components.payeUnderpayment.map((i) => ({
-                id: i.id,
-                amount: i.amount,
-              })),
-            }
-          : {}),
-        ...(components.selfAssessmentUnderpayment?.length
-          ? {
-              selfAssessmentUnderpayment: components.selfAssessmentUnderpayment.map((i) => ({
-                id: i.id,
-                amount: i.amount,
-              })),
-            }
-          : {}),
-        ...(components.debt?.length
-          ? {
-              debt: components.debt.map((i) => ({
-                id: i.id,
-                amount: i.amount,
-              })),
-            }
-          : {}),
-        ...(components.inYearAdjustment
-          ? {
-              inYearAdjustment: {
-                id: components.inYearAdjustment.id,
-                amount: components.inYearAdjustment.amount,
-              },
-            }
-          : {}),
+        ...(payeUnderpayment?.length ? { payeUnderpayment } : {}),
+        ...(selfAssessmentUnderpayment?.length ? { selfAssessmentUnderpayment } : {}),
+        ...(debt?.length ? { debt } : {}),
+        ...(inYearAdjustment ? { inYearAdjustment } : {}),
       },
     };
 
@@ -1275,6 +1289,8 @@ export class ClientsService {
       accessToken,
       fraudContext,
       codingOutErrorToUserMessage,
+      // Sandbox: same STATEFUL store as opt-in/opt-out so UI status matches writes
+      { stateful: true },
     );
   }
 
