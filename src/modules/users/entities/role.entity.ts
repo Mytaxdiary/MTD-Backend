@@ -2,7 +2,7 @@ import { Column, Entity } from 'typeorm';
 import { BaseEntity } from '../../../database/base.entity';
 
 /**
- * Roles table — firm roles: owner | staff.
+ * Roles table — firm: owner | staff; platform: admin (product-owner).
  */
 @Entity('roles')
 export class Role extends BaseEntity {

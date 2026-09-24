@@ -6,8 +6,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Request } from 'express';
 import { User } from '../../users/entities/user.entity';
-import type { FirmRole, StaffPermissions } from '../../users/permissions';
-import { normalizePermissions, resolveFirmRole } from '../../users/permissions';
+import type { AppRole, AuthTokenAudience, StaffPermissions } from '../../users/permissions';
+import {
+  EMPTY_PERMISSIONS,
+  audienceForRole,
+  normalizePermissions,
+  resolveAppRole,
+} from '../../users/permissions';
 
 export interface JwtPayload {
   /** Subject — userId (UUID) */
@@ -16,7 +21,8 @@ export interface JwtPayload {
   tenantId: string;
   /** True when the user completed a TOTP challenge in this session. */
   mfaAuthenticated?: boolean;
-  role?: FirmRole;
+  role?: AppRole;
+  audience?: AuthTokenAudience;
   permissions?: StaffPermissions;
   iat?: number;
   exp?: number;
@@ -30,7 +36,8 @@ export interface RequestUser {
   loginAt?: number;
   /** True when TOTP was verified during this login. */
   mfaAuthenticated?: boolean;
-  role: FirmRole;
+  role: AppRole;
+  audience: AuthTokenAudience;
   permissions: StaffPermissions;
 }
 
@@ -58,11 +65,38 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   /** Validates token payload AND confirms user still exists in DB. */
   async validate(payload: JwtPayload): Promise<RequestUser> {
-    const user = await this.userRepo.findOne({ where: { id: payload.sub } });
+    const user = await this.userRepo.findOne({
+      where: { id: payload.sub },
+      relations: ['tenant'],
+    });
     if (!user || !user.isActive) {
       throw new UnauthorizedException('User no longer exists');
     }
-    const role = resolveFirmRole(user.role?.name);
+
+    const role = resolveAppRole(user.role?.name);
+    const audience = audienceForRole(role);
+
+    // Firm users whose tenant was deactivated lose access immediately
+    if (role !== 'admin' && user.tenantId && user.tenant && !user.tenant.isActive) {
+      throw new UnauthorizedException(
+        'This firm account has been deactivated. Please contact support.',
+      );
+    }
+    if (role !== 'admin' && user.tenantId && !user.tenant) {
+      // Tenant missing — treat as blocked
+      throw new UnauthorizedException(
+        'This firm account has been deactivated. Please contact support.',
+      );
+    }
+
+    // Reject tokens issued for the wrong audience (e.g. role changed after issue)
+    if (payload.audience && payload.audience !== audience) {
+      throw new UnauthorizedException('Invalid token audience');
+    }
+
+    const permissions =
+      role === 'admin' ? EMPTY_PERMISSIONS : normalizePermissions(user.permissions, role);
+
     return {
       userId: payload.sub,
       email: payload.email,
@@ -70,7 +104,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       loginAt: payload.iat,
       mfaAuthenticated: payload.mfaAuthenticated ?? false,
       role,
-      permissions: normalizePermissions(user.permissions, role),
+      audience,
+      permissions,
     };
   }
 }

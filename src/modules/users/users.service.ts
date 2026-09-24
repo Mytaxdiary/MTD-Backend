@@ -16,7 +16,13 @@ import { ClientUser } from '../client-portal/entities/client-user.entity';
 import { PortalMessage } from '../client-portal/entities/portal-message.entity';
 import { PortalFile } from '../client-portal/entities/portal-file.entity';
 import { ClientNote } from '../clients/entities/client-note.entity';
-import { OWNER_PERMISSIONS, type FirmRole, type StaffPermissions } from './permissions';
+import {
+  EMPTY_PERMISSIONS,
+  OWNER_PERMISSIONS,
+  PLATFORM_ADMIN_ROLE,
+  type FirmRole,
+  type StaffPermissions,
+} from './permissions';
 
 const OWNER_ROLE = 'owner';
 const STAFF_ROLE = 'staff';
@@ -75,12 +81,22 @@ export class UsersService {
     email: string;
     passwordHash: string;
     role: Role;
-    tenantId: string;
-    permissions?: StaffPermissions;
+    tenantId?: string | null;
+    permissions?: StaffPermissions | null;
+    isEmailVerified?: boolean;
+    isActive?: boolean;
   }): Promise<User> {
     const user = this.userRepo.create({
-      ...data,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      firmName: data.firmName,
+      email: data.email,
+      passwordHash: data.passwordHash,
+      role: data.role,
+      tenantId: data.tenantId ?? undefined,
       permissions: data.permissions ?? OWNER_PERMISSIONS,
+      isEmailVerified: data.isEmailVerified ?? false,
+      isActive: data.isActive ?? true,
     });
     return this.userRepo.save(user);
   }
@@ -197,9 +213,9 @@ export class UsersService {
   }
 
   /**
-   * Finds a firm role, creating it if it does not yet exist.
+   * Finds a role by name, creating it if it does not yet exist.
    */
-  async findOrCreateRole(name: FirmRole): Promise<Role> {
+  async findOrCreateRole(name: FirmRole | typeof PLATFORM_ADMIN_ROLE): Promise<Role> {
     let role = await this.roleRepo.findOne({ where: { name } });
     if (!role) {
       role = this.roleRepo.create({ name });
@@ -214,6 +230,45 @@ export class UsersService {
 
   async findOrCreateStaffRole(): Promise<Role> {
     return this.findOrCreateRole(STAFF_ROLE);
+  }
+
+  async findOrCreateAdminRole(): Promise<Role> {
+    return this.findOrCreateRole(PLATFORM_ADMIN_ROLE);
+  }
+
+  /**
+   * Ensures a platform product-owner admin exists (idempotent).
+   * Returns null when the email already belongs to a non-admin user.
+   */
+  async ensurePlatformAdmin(data: {
+    email: string;
+    passwordHash: string;
+    firstName: string;
+    lastName: string;
+  }): Promise<{ created: boolean; skippedConflict: boolean; user: User | null }> {
+    const email = data.email.toLowerCase();
+    const existing = await this.findByEmail(email);
+    if (existing) {
+      if (existing.role?.name === PLATFORM_ADMIN_ROLE) {
+        return { created: false, skippedConflict: false, user: existing };
+      }
+      return { created: false, skippedConflict: true, user: null };
+    }
+
+    const role = await this.findOrCreateAdminRole();
+    const user = await this.create({
+      firstName: data.firstName,
+      lastName: data.lastName,
+      firmName: 'My Tax Diary Platform',
+      email,
+      passwordHash: data.passwordHash,
+      role,
+      tenantId: null,
+      permissions: EMPTY_PERMISSIONS,
+      isEmailVerified: true,
+      isActive: true,
+    });
+    return { created: true, skippedConflict: false, user };
   }
 
   /** @deprecated Use findOrCreateOwnerRole. Kept so existing tests still compile. */

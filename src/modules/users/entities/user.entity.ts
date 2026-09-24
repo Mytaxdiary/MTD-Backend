@@ -5,9 +5,9 @@ import { Tenant } from '../../tenants/entities/tenant.entity';
 import type { StaffPermissions } from '../permissions';
 
 /**
- * Users table — stores agent/accountant accounts.
- * firm_name maps to the frontend 'practiceName' field sent during registration.
- * Every user belongs to exactly one tenant (accounting firm).
+ * Users table — agent/accountant accounts and platform product-owner admins.
+ * firm_name maps to practiceName for firm users; platform admins use a fixed label.
+ * Firm users belong to one tenant; platform admins have null tenant_id.
  */
 @Entity('users')
 export class User extends BaseEntity {

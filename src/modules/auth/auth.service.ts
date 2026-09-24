@@ -30,10 +30,14 @@ import type {
 } from './types/auth-response.type';
 import type { JwtPayload } from './strategies/jwt.strategy';
 import {
+  EMPTY_PERMISSIONS,
   OWNER_PERMISSIONS,
+  audienceForRole,
+  isPlatformAdmin,
   normalizePermissions,
-  resolveFirmRole,
-  type FirmRole,
+  resolveAppRole,
+  type AppRole,
+  type AuthTokenAudience,
   type StaffPermissions,
 } from '../users/permissions';
 
@@ -116,8 +120,23 @@ export class AuthService {
     const invalidCredentials = new UnauthorizedException('Invalid credentials');
     if (!user || !user.isActive) throw invalidCredentials;
 
+    // Platform admins must use POST /auth/admin/login
+    if (isPlatformAdmin(user.role?.name)) {
+      throw new UnauthorizedException('Use the admin sign-in page');
+    }
+
     const passwordMatch = await comparePassword(dto.password, user.passwordHash);
     if (!passwordMatch) throw invalidCredentials;
+
+    // Deactivated firm — block all tenant users after password is verified
+    if (user.tenantId) {
+      const tenant = await this.tenantsService.findById(user.tenantId);
+      if (!tenant || !tenant.isActive) {
+        throw new UnauthorizedException(
+          'This firm account has been deactivated. Please contact support.',
+        );
+      }
+    }
 
     await this.usersService.updateLastLogin(user.id);
 
@@ -147,6 +166,51 @@ export class AuthService {
     }
 
     const tokens = await this.issueTokens(user.id, user.email, user.tenantId ?? '', false);
+
+    return {
+      ...tokens,
+      user: this.toAuthUser(user),
+    };
+  }
+
+  /**
+   * Platform product-owner admin login.
+   * Rejects firm owner/staff — they must use POST /auth/login.
+   */
+  async adminLogin(dto: LoginDto): Promise<AuthResponse> {
+    const user = await this.usersService.findByEmail(dto.email.toLowerCase());
+
+    const invalidCredentials = new UnauthorizedException('Invalid credentials');
+    if (!user || !user.isActive) throw invalidCredentials;
+    if (!isPlatformAdmin(user.role?.name)) throw invalidCredentials;
+
+    const passwordMatch = await comparePassword(dto.password, user.passwordHash);
+    if (!passwordMatch) throw invalidCredentials;
+
+    await this.usersService.updateLastLogin(user.id);
+
+    if (user.mfaEnabled && user.totpSecret) {
+      const mfaToken = this.jwtService.sign(
+        {
+          sub: user.id,
+          email: user.email,
+          tenantId: '',
+          type: 'mfa_challenge',
+          audience: 'admin',
+        },
+        { expiresIn: '5m' },
+      );
+      return {
+        accessToken: '',
+        refreshToken: '',
+        accessTokenExpiresAt: '',
+        requiresMfa: true,
+        mfaToken,
+        user: this.toAuthUser(user),
+      };
+    }
+
+    const tokens = await this.issueTokens(user.id, user.email, '', false);
 
     return {
       ...tokens,
@@ -252,6 +316,15 @@ export class AuthService {
     if (!user || !user.isActive) throw new UnauthorizedException('User not found.');
     if (!user.mfaEnabled || !user.totpSecret) {
       throw new BadRequestException('MFA is not configured for this account.');
+    }
+
+    if (user.tenantId) {
+      const tenant = await this.tenantsService.findById(user.tenantId);
+      if (!tenant || !tenant.isActive) {
+        throw new UnauthorizedException(
+          'This firm account has been deactivated. Please contact support.',
+        );
+      }
     }
 
     const encryptionKey = this.configService.get<string>('hmrc.encryptionKey');
@@ -410,6 +483,15 @@ export class AuthService {
     // Revoke used token immediately (rotation)
     await this.refreshTokenRepo.update(stored.id, { isRevoked: true });
 
+    if (stored.user.tenantId) {
+      const tenant = await this.tenantsService.findById(stored.user.tenantId);
+      if (!tenant || !tenant.isActive) {
+        throw new UnauthorizedException(
+          'This firm account has been deactivated. Please contact support.',
+        );
+      }
+    }
+
     // Preserve MFA flag from the original login session across rotation
     return this.issueTokens(
       stored.user.id,
@@ -498,7 +580,9 @@ export class AuthService {
   }
 
   private toAuthUser(user: User): AuthUserResponse {
-    const role = resolveFirmRole(user.role?.name);
+    const role = resolveAppRole(user.role?.name);
+    const permissions =
+      role === 'admin' ? EMPTY_PERMISSIONS : normalizePermissions(user.permissions, role);
     return {
       id: user.id,
       name: `${user.firstName} ${user.lastName}`,
@@ -508,17 +592,21 @@ export class AuthService {
       mfaEnabled: user.mfaEnabled,
       tenantId: user.tenantId ?? null,
       role,
-      permissions: normalizePermissions(user.permissions, role),
+      permissions,
     };
   }
 
   private async roleAndPermissions(userId: string): Promise<{
-    role: FirmRole;
+    role: AppRole;
+    audience: AuthTokenAudience;
     permissions: StaffPermissions;
   }> {
     const user = await this.usersService.findById(userId);
-    const role = resolveFirmRole(user?.role?.name);
-    return { role, permissions: normalizePermissions(user?.permissions, role) };
+    const role = resolveAppRole(user?.role?.name);
+    const audience = audienceForRole(role);
+    const permissions =
+      role === 'admin' ? EMPTY_PERMISSIONS : normalizePermissions(user?.permissions, role);
+    return { role, audience, permissions };
   }
 
   private async issueTokens(
@@ -527,13 +615,14 @@ export class AuthService {
     tenantId: string,
     mfaAuthenticated = false,
   ): Promise<TokensResponse> {
-    const { role, permissions } = await this.roleAndPermissions(userId);
+    const { role, audience, permissions } = await this.roleAndPermissions(userId);
     const payload: JwtPayload = {
       sub: userId,
       email,
-      tenantId,
+      tenantId: role === 'admin' ? '' : tenantId,
       mfaAuthenticated,
       role,
+      audience,
       permissions,
     };
     const jwtExpiresIn = this.configService.get<string>('auth.jwtExpiresIn');

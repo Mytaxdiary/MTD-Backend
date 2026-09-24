@@ -4,7 +4,7 @@
  *   AuthResponse → { accessToken, refreshToken, user }
  */
 
-import type { FirmRole, StaffPermissions } from '../../users/permissions';
+import type { AppRole, StaffPermissions } from '../../users/permissions';
 
 export interface AuthUserResponse {
   id: string;
@@ -16,7 +16,7 @@ export interface AuthUserResponse {
   isEmailVerified: boolean;
   tenantId: string | null;
   mfaEnabled?: boolean;
-  role: FirmRole;
+  role: AppRole;
   permissions: StaffPermissions;
 }
 

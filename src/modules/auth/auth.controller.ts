@@ -39,6 +39,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { RequestUser } from './strategies/jwt.strategy';
 import { TeamService } from '../team/team.service';
 import { AcceptStaffInviteDto } from '../team/dto/team.dto';
+import { AuthAudience } from '../../common/decorators/auth-audience.decorator';
 
 interface AuthRequest extends ExpressRequest {
   user: RequestUser;
@@ -80,6 +81,25 @@ export class AuthController {
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
     const result = await this.authService.login(dto);
     // Only set cookies when full tokens were issued (no MFA challenge pending)
+    if (!result.requiresMfa) {
+      this.setAuthCookies(res, result.accessToken, result.refreshToken);
+    }
+    return result;
+  }
+
+  // ── Admin login (platform product-owner) ──────────────────────────────────
+
+  @Post('admin/login')
+  @Throttle({ auth: { limit: 10, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Platform admin sign-in',
+    description: 'For product-owner admins only. Firm owner/staff must use POST /auth/login.',
+  })
+  @ApiOkResponse({ description: 'Admin tokens set as httpOnly cookies' })
+  @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
+  async adminLogin(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.authService.adminLogin(dto);
     if (!result.requiresMfa) {
       this.setAuthCookies(res, result.accessToken, result.refreshToken);
     }
@@ -217,6 +237,7 @@ export class AuthController {
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
+  @AuthAudience('any')
   @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'Log out — revokes refresh token and clears cookies' })
   @ApiOkResponse({ description: 'Logged out successfully' })

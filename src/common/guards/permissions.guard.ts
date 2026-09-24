@@ -31,6 +31,10 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('You do not have permission to perform this action.');
     }
 
+    if (actor.role === 'admin') {
+      throw new ForbiddenException('Use the admin panel to access this resource.');
+    }
+
     if (ownerOnly && actor.role === 'staff') {
       throw new ForbiddenException('Only the firm owner can perform this action.');
     }

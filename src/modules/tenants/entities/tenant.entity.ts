@@ -28,4 +28,11 @@ export class Tenant extends BaseEntity {
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
+
+  /** Optional note when a platform admin deactivates the firm. Cleared on reactivate. */
+  @Column({ name: 'deactivation_reason', type: 'text', nullable: true })
+  deactivationReason?: string | null;
+
+  @Column({ name: 'deactivated_at', type: 'datetime', nullable: true })
+  deactivatedAt?: Date | null;
 }

@@ -1,6 +1,15 @@
 export const FIRM_ROLES = ['owner', 'staff'] as const;
 export type FirmRole = (typeof FIRM_ROLES)[number];
 
+/** Platform product-owner admins — not a firm role. Stored in `roles.name`. */
+export const PLATFORM_ADMIN_ROLE = 'admin' as const;
+export const PLATFORM_ROLES = [PLATFORM_ADMIN_ROLE] as const;
+export type PlatformRole = (typeof PLATFORM_ROLES)[number];
+
+export type AppRole = FirmRole | PlatformRole;
+
+export type AuthTokenAudience = 'firm' | 'admin';
+
 export interface StaffPermissions {
   canAddClients: boolean;
   canChase: boolean;
@@ -32,8 +41,25 @@ export const DEFAULT_STAFF_PERMISSIONS: StaffPermissions = {
   canInviteStaff: false,
 };
 
+/** Platform admins have no firm permission flags. */
+export const EMPTY_PERMISSIONS: StaffPermissions = { ...DEFAULT_STAFF_PERMISSIONS };
+
+export function isPlatformAdmin(roleName?: string | null): boolean {
+  return roleName === PLATFORM_ADMIN_ROLE;
+}
+
+export function resolveAppRole(roleName?: string | null): AppRole {
+  if (roleName === PLATFORM_ADMIN_ROLE) return PLATFORM_ADMIN_ROLE;
+  return roleName === 'staff' ? 'staff' : 'owner';
+}
+
+/** Firm roles only — do not call with platform admin. */
 export function resolveFirmRole(roleName?: string | null): FirmRole {
   return roleName === 'staff' ? 'staff' : 'owner';
+}
+
+export function audienceForRole(role: AppRole): AuthTokenAudience {
+  return role === PLATFORM_ADMIN_ROLE ? 'admin' : 'firm';
 }
 
 export function permissionsForRole(role: FirmRole): StaffPermissions {
@@ -58,9 +84,10 @@ export function normalizePermissions(
 }
 
 export function hasPermission(
-  actor: { role?: FirmRole; permissions?: StaffPermissions },
+  actor: { role?: AppRole; permissions?: StaffPermissions },
   key: keyof StaffPermissions,
 ): boolean {
+  if (actor.role === PLATFORM_ADMIN_ROLE) return false;
   if (actor.role !== 'staff') return true;
   return actor.permissions?.[key] === true;
 }
