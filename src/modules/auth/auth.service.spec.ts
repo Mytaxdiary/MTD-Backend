@@ -51,6 +51,7 @@ const mockUsersService = {
 
 const mockTenantsService = {
   create: jest.fn(),
+  findById: jest.fn().mockResolvedValue({ id: 'tenant-1', isActive: true }),
 };
 
 const mockJwtService = {
@@ -104,6 +105,7 @@ describe('AuthService — login()', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockTenantsService.findById.mockResolvedValue({ id: 'tenant-1', isActive: true });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -150,6 +152,17 @@ describe('AuthService — login()', () => {
     await service.login({ email: 'JOHN@EXAMPLE.COM', password: 'correct' });
 
     expect(mockUsersService.findByEmail).toHaveBeenCalledWith('john@example.com');
+  });
+
+  it('throws UnauthorizedException when firm is deactivated', async () => {
+    const user = makeUser();
+    mockUsersService.findByEmail.mockResolvedValue(user);
+    jest.spyOn(cryptoHelper, 'comparePassword').mockResolvedValue(true);
+    mockTenantsService.findById.mockResolvedValue({ id: 'tenant-1', isActive: false });
+
+    await expect(
+      service.login({ email: user.email, password: 'correct-password' }),
+    ).rejects.toThrow(/deactivated/i);
   });
 
   // ── Wrong / missing user ────────────────────────────────────────────────────
