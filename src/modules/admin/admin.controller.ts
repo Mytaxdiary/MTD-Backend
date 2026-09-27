@@ -29,6 +29,8 @@ import { AuthService } from '../auth/auth.service';
 import { AdminService } from './admin.service';
 import { AdminFirmsQueryDto } from './dto/admin-firms-query.dto';
 import { SetFirmActiveDto } from './dto/set-firm-active.dto';
+import { AdminEnquiriesQueryDto } from './dto/admin-enquiries-query.dto';
+import { UpdateEnquiryDto } from './dto/update-enquiry.dto';
 
 interface AuthRequest extends ExpressRequest {
   user: RequestUser;
@@ -103,5 +105,44 @@ export class AdminController {
   @ApiBadRequestResponse({ description: 'Invalid payload' })
   setFirmActive(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetFirmActiveDto) {
     return this.adminService.setFirmActive(id, dto.isActive, dto.reason);
+  }
+
+  @Get('enquiries')
+  @ApiOperation({ summary: 'Paginated list of marketing enquiries' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, enum: ['new', 'contacted', 'closed'] })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiOkResponse({ description: 'Enquiry list page' })
+  listEnquiries(@Query() query: AdminEnquiriesQueryDto) {
+    return this.adminService.listEnquiries({
+      page: query.page,
+      limit: query.limit,
+      status: query.status,
+      search: query.search,
+    });
+  }
+
+  @Get('enquiries/:id')
+  @ApiOperation({ summary: 'Enquiry detail' })
+  @ApiOkResponse({ description: 'Enquiry detail' })
+  @ApiNotFoundResponse({ description: 'Enquiry not found' })
+  getEnquiry(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.getEnquiry(id);
+  }
+
+  @Patch('enquiries/:id')
+  @ApiOperation({
+    summary: 'Update enquiry status and/or internal note',
+    description: 'Reply email is out of scope for this task.',
+  })
+  @ApiOkResponse({ description: 'Updated enquiry' })
+  @ApiNotFoundResponse({ description: 'Enquiry not found' })
+  @ApiBadRequestResponse({ description: 'Invalid payload' })
+  updateEnquiry(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateEnquiryDto) {
+    return this.adminService.updateEnquiry(id, {
+      status: dto.status,
+      internalNote: dto.internalNote,
+    });
   }
 }

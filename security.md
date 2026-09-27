@@ -122,7 +122,8 @@ Single-use password reset tokens with 1-hour expiry
 Generic login error message — does not reveal if email exists
 Refresh token rotation — old token revoked on every refresh
 All refresh tokens revoked on password reset (forces re-login)
-Rate limiting globally on all API endpoints (ThrottlerGuard)
+Rate limiting globally on all API endpoints (ThrottlerGuard) — 100 req/min
+Stricter rate limit on auth endpoints (login, register, forgot-password) — 10 req/min via named throttler
 Helmet security headers on all responses
 CORS restricted to frontend URL in production
 DTO whitelist validation — unknown fields rejected on all endpoints
@@ -130,26 +131,34 @@ JWT secret required and validated in env on startup
 Swagger docs disabled in production
 Daily cron jobs to purge expired and revoked tokens from DB
 Cascade delete — tokens deleted automatically when user is deleted
-401 interceptor on frontend Axios client
+401 interceptor on frontend Axios client with silent token refresh
+Silent refresh — failed requests queued and retried after token rotation
 Protected vs public route separation on frontend
 .env removed from git tracking
+httpOnly cookie-based token storage — tokens not accessible via JS
+Email verification flow — isEmailVerified enforced, verification email on register
+Tenant foundation implemented:
+  - Tenant entity + tenants table (each firm = one tenant)
+  - tenant_id FK on users table
+  - tenantId embedded in JWT payload (available on every request via req.user.tenantId)
+  - TenantAwareBaseEntity — base class for all future domain entities (clients, submissions, etc.)
+  - TenantGuard — enforces tenant context on protected routes
+  - Migration: tenants table + users.tenant_id backfill
 
 Can implement now (easy wins) 🔜
-Stricter rate limit on auth endpoints (login, register) — currently global 100/min, should be ~10/min
-Frontend JWT token storage and Axios interceptor wiring (TODO stubs already in place)
-Frontend checkAuth() real implementation — currently returns mock true
 HTTPS enforce on backend in production
+Row-level tenant filtering in all repository queries (once client/submission entities are built)
+OWASP object-level authorisation — ownership checks on every ID-based endpoint
 
 Implement later (future phases) 📅
-Tenant isolation — tenant_id on all records, row-level filtering in every query
+Full row-level enforcement in all repositories/services (apply TenantAwareBaseEntity + TenantGuard)
 Xero/QuickBooks OAuth token storage in secrets manager/vault, rotation, disconnect flow
-Email verification flow (isEmailVerified column already exists, flow missing)
 Move env secrets to AWS Secrets Manager or similar vault for production
 Admin access logging and audit trail for internal team
 Data at-rest encryption for sensitive DB columns (financial data)
 LLM tenant isolation — AI prompts must never mix data across tenants
-OWASP object-level authorisation — ownership checks on every ID-based endpoint
 Formal data classification enforcement in code (Confidential / Restricted handling)
+Support/admin time-bound access controls and audit trail
 
 
 
@@ -413,4 +422,8 @@ Sabse pehle:
 * token/log masking implement karo
 * repository/service pattern me tenant filter design karo
 
-Agar chaho to main is note ke basis par **“implemented / pending / do now / do later”** ka ek clean client-facing reply bhi likh deta hoon.
+
+
+
+
+Had a thought over the weekend @Farhan Malik we need to build so that we are allowing for future integrations with Xero, Qbs, taxcalc etc to confirm submission

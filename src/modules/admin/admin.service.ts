@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { User } from '../users/entities/user.entity';
-import { Enquiry } from '../enquiries/entities/enquiry.entity';
+import { Enquiry, type EnquiryStatus } from '../enquiries/entities/enquiry.entity';
 import { Client } from '../clients/entities/client.entity';
 import { HmrcConnection } from '../hmrc/entities/hmrc-connection.entity';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
@@ -70,6 +70,29 @@ export interface AdminFirmDetail {
   hmrcStatus: string | null;
   hmrcConnectedAt: string | null;
   users: AdminFirmUser[];
+}
+
+export interface AdminEnquiryItem {
+  id: string;
+  name: string;
+  firm: string;
+  email: string;
+  phone: string | null;
+  message: string;
+  sourcePage: string | null;
+  planInterest: string | null;
+  status: EnquiryStatus;
+  internalNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminEnquiryListResponse {
+  items: AdminEnquiryItem[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 }
 
 @Injectable()
@@ -276,6 +299,94 @@ export class AdminService {
     }
 
     return this.getFirm(id);
+  }
+
+  async listEnquiries(opts: {
+    page?: number;
+    limit?: number;
+    status?: EnquiryStatus;
+    search?: string;
+  }): Promise<AdminEnquiryListResponse> {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(100, Math.max(1, opts.limit ?? 20));
+    const search = opts.search?.trim();
+
+    const qb = this.enquiryRepo
+      .createQueryBuilder('e')
+      .orderBy('e.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (opts.status) {
+      qb.andWhere('e.status = :status', { status: opts.status });
+    }
+
+    if (search) {
+      const q = `%${search.toLowerCase()}%`;
+      qb.andWhere(
+        new Brackets((w) => {
+          w.where('LOWER(e.name) LIKE :q', { q })
+            .orWhere('LOWER(e.firm) LIKE :q', { q })
+            .orWhere('LOWER(e.email) LIKE :q', { q });
+        }),
+      );
+    }
+
+    const [rows, total] = await qb.getManyAndCount();
+
+    return {
+      items: rows.map((e) => this.toEnquiryItem(e)),
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async getEnquiry(id: string): Promise<AdminEnquiryItem> {
+    const enquiry = await this.enquiryRepo.findOne({ where: { id } });
+    if (!enquiry) throw new NotFoundException('Enquiry not found');
+    return this.toEnquiryItem(enquiry);
+  }
+
+  async updateEnquiry(
+    id: string,
+    patch: { status?: EnquiryStatus; internalNote?: string | null },
+  ): Promise<AdminEnquiryItem> {
+    const enquiry = await this.enquiryRepo.findOne({ where: { id } });
+    if (!enquiry) throw new NotFoundException('Enquiry not found');
+
+    if (patch.status === undefined && patch.internalNote === undefined) {
+      throw new BadRequestException('Provide status and/or internalNote to update.');
+    }
+
+    if (patch.status !== undefined) {
+      enquiry.status = patch.status;
+    }
+    if (patch.internalNote !== undefined) {
+      const note = patch.internalNote === null ? null : patch.internalNote.trim() || null;
+      enquiry.internalNote = note;
+    }
+
+    const saved = await this.enquiryRepo.save(enquiry);
+    return this.toEnquiryItem(saved);
+  }
+
+  private toEnquiryItem(e: Enquiry): AdminEnquiryItem {
+    return {
+      id: e.id,
+      name: e.name,
+      firm: e.firm,
+      email: e.email,
+      phone: e.phone ?? null,
+      message: e.message,
+      sourcePage: e.sourcePage ?? null,
+      planInterest: e.planInterest ?? null,
+      status: e.status,
+      internalNote: e.internalNote ?? null,
+      createdAt: e.createdAt.toISOString(),
+      updatedAt: e.updatedAt.toISOString(),
+    };
   }
 
   private async revokeTenantSessions(tenantId: string): Promise<void> {
