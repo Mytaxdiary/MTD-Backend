@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
   Body,
   Query,
   UseGuards,
@@ -35,6 +36,7 @@ import { LogoutDto } from './dto/refresh-token.dto';
 import { EnableMfaDto } from './dto/enable-mfa.dto';
 import { DisableMfaDto } from './dto/disable-mfa.dto';
 import { VerifyMfaDto } from './dto/verify-mfa.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { RequestUser } from './strategies/jwt.strategy';
 import { TeamService } from '../team/team.service';
@@ -186,6 +188,16 @@ export class AuthController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
   getProfile(@Request() req: AuthRequest) {
     return this.authService.getProfile(req.user.userId);
+  }
+
+  @Patch('profile')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Update your display name (first + last)' })
+  @ApiOkResponse({ description: 'Updated user profile' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  updateProfile(@Request() req: AuthRequest, @Body() dto: UpdateProfileDto) {
+    return this.authService.updateProfile(req.user.userId, dto.firstName, dto.lastName);
   }
 
   // ── Session (validate / proactive refresh on load) ────────────────────────

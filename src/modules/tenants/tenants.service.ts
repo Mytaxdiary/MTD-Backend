@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Tenant } from './entities/tenant.entity';
 import { NotificationPreferences } from './entities/notification-preferences.entity';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { UpdateNotificationPreferencesDto } from '../users/dto/update-notification-preferences.dto';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class TenantsService {
@@ -13,6 +14,8 @@ export class TenantsService {
     private readonly tenantRepo: Repository<Tenant>,
     @InjectRepository(NotificationPreferences)
     private readonly notifRepo: Repository<NotificationPreferences>,
+    @Inject(forwardRef(() => UsersService))
+    private readonly usersService: UsersService,
   ) {}
 
   async create(
@@ -36,7 +39,11 @@ export class TenantsService {
     const tenant = await this.tenantRepo.findOne({ where: { id } });
     if (!tenant) throw new NotFoundException('Tenant not found');
     Object.assign(tenant, dto);
-    return this.tenantRepo.save(tenant);
+    const saved = await this.tenantRepo.save(tenant);
+    if (dto.firmName !== undefined) {
+      await this.usersService.syncFirmNameForTenant(id, saved.firmName);
+    }
+    return saved;
   }
 
   /** Returns notification preferences for a tenant, creating defaults on first call. */

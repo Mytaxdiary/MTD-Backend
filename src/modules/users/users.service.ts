@@ -69,6 +69,11 @@ export class UsersService {
     return this.userRepo.findOne({ where: { id } });
   }
 
+  /** Keep denormalised users.firm_name in sync when the tenant firm name changes. */
+  async syncFirmNameForTenant(tenantId: string, firmName: string): Promise<void> {
+    await this.userRepo.update({ tenantId }, { firmName });
+  }
+
   async emailExists(email: string): Promise<boolean> {
     const count = await this.userRepo.count({ where: { email } });
     return count > 0;
@@ -103,6 +108,14 @@ export class UsersService {
 
   async updateLastLogin(id: string): Promise<void> {
     await this.userRepo.update(id, { lastLoginAt: new Date() });
+  }
+
+  async updateName(id: string, firstName: string, lastName: string): Promise<User> {
+    const user = await this.findById(id);
+    if (!user) throw new NotFoundException('User not found');
+    user.firstName = firstName;
+    user.lastName = lastName;
+    return this.userRepo.save(user);
   }
 
   async updatePassword(id: string, passwordHash: string): Promise<void> {

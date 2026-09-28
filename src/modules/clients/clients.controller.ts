@@ -135,9 +135,9 @@ export class ClientsController {
     return this.clientsService.assignClient(req.user as RequestUser, id, dto.assignedToUserId);
   }
 
-  /** Update editable client fields (e.g. UTR) */
+  /** Update editable client fields (name, UTR, preferred name) */
   @Patch(':id')
-  @ApiOperation({ summary: 'Update client fields (UTR etc.)' })
+  @ApiOperation({ summary: 'Update client fields (name, UTR, preferred name)' })
   async update(
     @Request() req: ExpressRequest,
     @Param('id') id: string,

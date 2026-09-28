@@ -10,6 +10,8 @@ export interface AuthUserResponse {
   id: string;
   /** Full name: firstName + lastName */
   name: string;
+  firstName: string;
+  lastName: string;
   email: string;
   /** Maps from practiceName sent at registration */
   firmName: string;

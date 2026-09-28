@@ -413,7 +413,14 @@ export class AuthService {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException();
 
-    return this.toAuthUser(user);
+    const tenant = user.tenantId ? await this.tenantsService.findById(user.tenantId) : null;
+    return this.toAuthUser(user, tenant?.firmName);
+  }
+
+  async updateProfile(userId: string, firstName: string, lastName: string) {
+    const updated = await this.usersService.updateName(userId, firstName.trim(), lastName.trim());
+    const tenant = updated.tenantId ? await this.tenantsService.findById(updated.tenantId) : null;
+    return this.toAuthUser(updated, tenant?.firmName);
   }
 
   // ── Refresh tokens ───────────────────────────────────────────────────────
@@ -579,15 +586,17 @@ export class AuthService {
     return { ...tokens, user: this.toAuthUser(user) };
   }
 
-  private toAuthUser(user: User): AuthUserResponse {
+  private toAuthUser(user: User, firmNameOverride?: string): AuthUserResponse {
     const role = resolveAppRole(user.role?.name);
     const permissions =
       role === 'admin' ? EMPTY_PERMISSIONS : normalizePermissions(user.permissions, role);
     return {
       id: user.id,
       name: `${user.firstName} ${user.lastName}`,
+      firstName: user.firstName,
+      lastName: user.lastName,
       email: user.email,
-      firmName: user.firmName,
+      firmName: firmNameOverride ?? user.firmName,
       isEmailVerified: user.isEmailVerified,
       mfaEnabled: user.mfaEnabled,
       tenantId: user.tenantId ?? null,

@@ -733,10 +733,17 @@ export class ClientsService {
   async updateClient(
     tenantId: string,
     id: string,
-    fields: { utr?: string; preferredName?: string },
+    fields: { name?: string; utr?: string; preferredName?: string },
     actor?: RequestUser | null,
   ): Promise<Client> {
     const client = await this.findOne(tenantId, id, actor);
+    if (fields.name !== undefined) {
+      const trimmed = fields.name.trim();
+      if (!trimmed) {
+        throw new BadRequestException('Client name cannot be empty.');
+      }
+      client.name = trimmed;
+    }
     if (fields.utr !== undefined) client.utr = fields.utr || undefined;
     if (fields.preferredName !== undefined) {
       const trimmed = fields.preferredName.trim();
