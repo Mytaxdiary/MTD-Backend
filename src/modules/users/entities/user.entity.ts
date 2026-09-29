@@ -35,6 +35,13 @@ export class User extends BaseEntity {
   @Column({ name: 'last_login_at', type: 'datetime', nullable: true })
   lastLoginAt?: Date;
 
+  /**
+   * When set, any access JWT with iat earlier than this timestamp is rejected.
+   * Used for admin force-logout / compromise response (with refresh token revoke).
+   */
+  @Column({ name: 'session_invalidated_at', type: 'datetime', nullable: true })
+  sessionInvalidatedAt?: Date | null;
+
   @Column({ name: 'mfa_enabled', type: 'boolean', default: false })
   mfaEnabled: boolean;
 

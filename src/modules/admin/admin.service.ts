@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, Repository } from 'typeorm';
+import { Brackets, In, Repository } from 'typeorm';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { User } from '../users/entities/user.entity';
 import { Enquiry, type EnquiryStatus } from '../enquiries/entities/enquiry.entity';
@@ -290,7 +290,9 @@ export class AdminService {
       tenant.deactivationReason = trimmed || null;
       tenant.deactivatedAt = new Date();
       await this.tenantRepo.save(tenant);
-      await this.revokeTenantSessions(id);
+      await this.invalidateSessionsForUserIds(
+        (await this.userRepo.find({ where: { tenantId: id }, select: ['id'] })).map((u) => u.id),
+      );
     } else {
       tenant.isActive = true;
       tenant.deactivationReason = null;
@@ -299,6 +301,40 @@ export class AdminService {
     }
 
     return this.getFirm(id);
+  }
+
+  /**
+   * Force-logout every user in a firm: revoke refresh tokens and invalidate access JWTs.
+   * Does not deactivate the firm — users can sign in again.
+   */
+  async invalidateFirmSessions(tenantId: string): Promise<AdminFirmDetail> {
+    const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
+    if (!tenant) throw new NotFoundException('Firm not found');
+
+    const users = await this.userRepo.find({
+      where: { tenantId },
+      select: ['id'],
+    });
+    await this.invalidateSessionsForUserIds(users.map((u) => u.id));
+    return this.getFirm(tenantId);
+  }
+
+  /**
+   * Force-logout a single user on a firm (compromise / support).
+   * Does not deactivate the user account.
+   */
+  async invalidateUserSessions(tenantId: string, userId: string): Promise<AdminFirmDetail> {
+    const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
+    if (!tenant) throw new NotFoundException('Firm not found');
+
+    const user = await this.userRepo.findOne({
+      where: { id: userId, tenantId },
+      select: ['id'],
+    });
+    if (!user) throw new NotFoundException('User not found on this firm');
+
+    await this.invalidateSessionsForUserIds([user.id]);
+    return this.getFirm(tenantId);
   }
 
   async listEnquiries(opts: {
@@ -389,13 +425,15 @@ export class AdminService {
     };
   }
 
-  private async revokeTenantSessions(tenantId: string): Promise<void> {
-    const users = await this.userRepo.find({
-      where: { tenantId },
-      select: ['id'],
-    });
-    const userIds = users.map((u) => u.id);
+  /**
+   * Revoke refresh tokens and stamp sessionInvalidatedAt so existing access JWTs
+   * fail JwtStrategy immediately (iat older than invalidation).
+   */
+  private async invalidateSessionsForUserIds(userIds: string[]): Promise<void> {
     if (userIds.length === 0) return;
+
+    const now = new Date();
+    await this.userRepo.update({ id: In(userIds) }, { sessionInvalidatedAt: now });
 
     await this.refreshTokenRepo
       .createQueryBuilder()

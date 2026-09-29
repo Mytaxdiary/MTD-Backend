@@ -73,6 +73,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('User no longer exists');
     }
 
+    // Force-logout / compromise: reject access tokens issued before invalidation
+    if (
+      user.sessionInvalidatedAt &&
+      payload.iat != null &&
+      payload.iat < Math.floor(user.sessionInvalidatedAt.getTime() / 1000)
+    ) {
+      throw new UnauthorizedException('Session has been revoked. Please sign in again.');
+    }
+
     const role = resolveAppRole(user.role?.name);
     const audience = audienceForRole(role);
 

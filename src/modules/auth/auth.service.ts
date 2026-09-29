@@ -490,6 +490,10 @@ export class AuthService {
     // Revoke used token immediately (rotation)
     await this.refreshTokenRepo.update(stored.id, { isRevoked: true });
 
+    if (!stored.user.isActive) {
+      throw new UnauthorizedException('User no longer exists');
+    }
+
     if (stored.user.tenantId) {
       const tenant = await this.tenantsService.findById(stored.user.tenantId);
       if (!tenant || !tenant.isActive) {

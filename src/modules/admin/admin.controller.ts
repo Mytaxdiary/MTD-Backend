@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Patch,
+  Post,
   Body,
   Param,
   Query,
@@ -9,6 +10,8 @@ import {
   Request,
   UnauthorizedException,
   ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -105,6 +108,35 @@ export class AdminController {
   @ApiBadRequestResponse({ description: 'Invalid payload' })
   setFirmActive(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetFirmActiveDto) {
     return this.adminService.setFirmActive(id, dto.isActive, dto.reason);
+  }
+
+  @Post('firms/:id/invalidate-sessions')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Force logout all users for a firm',
+    description:
+      'Revokes refresh tokens and invalidates access JWTs for every user on the firm. Does not deactivate the firm.',
+  })
+  @ApiOkResponse({ description: 'Firm detail after session invalidation' })
+  @ApiNotFoundResponse({ description: 'Firm not found' })
+  invalidateFirmSessions(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.invalidateFirmSessions(id);
+  }
+
+  @Post('firms/:id/users/:userId/invalidate-sessions')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Force logout a single firm user',
+    description:
+      'Revokes that user’s refresh tokens and invalidates their access JWT. Does not deactivate the account.',
+  })
+  @ApiOkResponse({ description: 'Firm detail after session invalidation' })
+  @ApiNotFoundResponse({ description: 'Firm or user not found' })
+  invalidateUserSessions(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ) {
+    return this.adminService.invalidateUserSessions(id, userId);
   }
 
   @Get('enquiries')
