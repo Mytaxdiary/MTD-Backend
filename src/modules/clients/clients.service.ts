@@ -498,6 +498,43 @@ export class ClientsService {
   }
 
   /**
+   * Add Client “Invitations” panel — same cohort as dashboard pending invites
+   * (no authorisedAt yet), plus already-terminal invite outcomes that still need
+   * a resend. Lightweight: no per-client HMRC business hydration (unlike findAll).
+   */
+  async findInvitationPanelClients(
+    tenantId: string,
+    fraudContext?: HmrcFraudRequestContext | null,
+    actor?: RequestUser | null,
+  ): Promise<Client[]> {
+    const base = staffClientWhere(tenantId, actor, {}, { excludePortalOnly: true });
+    // Match dashboard pending-invite (!authorisedAt) and keep expired/declined
+    // even if a relationship flag were ever out of sync.
+    const where: FindOptionsWhere<Client>[] = [
+      { ...base, authorisedAt: IsNull() },
+      {
+        ...base,
+        invitationStatus: In(['expired', 'rejected', 'cancelled', 'deauthorised']),
+      },
+    ];
+
+    let clients = await this.clientRepo.find({
+      where,
+      order: { invitationSentAt: 'DESC', createdAt: 'DESC' },
+    });
+    await this.syncInvitationStatusesFromHmrc(tenantId, clients, fraudContext);
+    await this.syncRelationshipsFromHmrc(tenantId, clients, fraudContext);
+    clients = await this.clientRepo.find({
+      where,
+      order: { invitationSentAt: 'DESC', createdAt: 'DESC' },
+    });
+
+    // Dedupe OR results (TypeORM may return the same row twice)
+    const byId = new Map(clients.map((c) => [c.id, c]));
+    return [...byId.values()];
+  }
+
+  /**
    * Sandbox only — simulates the client accepting via Government Gateway.
    * PUT /agent-authorisation-test-support/invitations/{invitationId} (Postman step 9).
    */

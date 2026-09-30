@@ -97,6 +97,20 @@ export class ClientsController {
     );
   }
 
+  /** Add Client invitations panel (pending / expired / declined / awaiting relationship) */
+  @Get('invitation-panel')
+  @ApiOperation({
+    summary: 'List clients for the Add Client invitations panel',
+  })
+  async findInvitationPanelClients(@Request() req: ExpressRequest) {
+    const actor = req.user as RequestUser;
+    return this.clientsService.findInvitationPanelClients(
+      actor.tenantId,
+      this.fraudContext(req),
+      actor,
+    );
+  }
+
   /** Invite a portal-only customer (no HMRC authorisation) */
   @Post('portal-invite')
   @RequirePermission('canAddClients')
