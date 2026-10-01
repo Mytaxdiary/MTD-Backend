@@ -8,6 +8,16 @@ import { Client } from '../clients/entities/client.entity';
 import { HmrcConnection } from '../hmrc/entities/hmrc-connection.entity';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
 import { resolveFirmRole } from '../users/permissions';
+import {
+  AdminAuditLog,
+  type AdminAuditAction,
+  type AdminAuditTargetType,
+} from './entities/admin-audit-log.entity';
+
+export interface AdminActor {
+  userId: string;
+  email?: string | null;
+}
 
 export interface AdminOverviewStats {
   totalFirms: number;
@@ -95,6 +105,27 @@ export interface AdminEnquiryListResponse {
   totalPages: number;
 }
 
+export interface AdminAuditLogItem {
+  id: string;
+  actorUserId: string;
+  actorEmail: string | null;
+  action: AdminAuditAction;
+  targetType: AdminAuditTargetType;
+  targetId: string;
+  targetLabel: string | null;
+  summary: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface AdminAuditLogListResponse {
+  items: AdminAuditLogItem[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -110,6 +141,8 @@ export class AdminService {
     private readonly hmrcConnectionRepo: Repository<HmrcConnection>,
     @InjectRepository(RefreshToken)
     private readonly refreshTokenRepo: Repository<RefreshToken>,
+    @InjectRepository(AdminAuditLog)
+    private readonly auditLogRepo: Repository<AdminAuditLog>,
   ) {}
 
   async getOverview(): Promise<AdminOverviewStats> {
@@ -268,15 +301,33 @@ export class AdminService {
    * Activate or deactivate a firm. Deactivation blocks all tenant users from logging in
    * and revokes their refresh tokens. Optional reason is stored while inactive.
    */
-  async setFirmActive(id: string, isActive: boolean, reason?: string): Promise<AdminFirmDetail> {
+  async setFirmActive(
+    id: string,
+    isActive: boolean,
+    reason: string | undefined,
+    actor: AdminActor,
+  ): Promise<AdminFirmDetail> {
     const tenant = await this.tenantRepo.findOne({ where: { id } });
     if (!tenant) throw new NotFoundException('Firm not found');
 
     if (tenant.isActive === isActive) {
       // Idempotent — still allow updating reason when already inactive
       if (!isActive && reason !== undefined) {
-        tenant.deactivationReason = reason.trim() || null;
+        const trimmed = reason.trim() || null;
+        const previous = tenant.deactivationReason ?? null;
+        tenant.deactivationReason = trimmed;
         await this.tenantRepo.save(tenant);
+        if (previous !== trimmed) {
+          await this.recordAudit({
+            actor,
+            action: 'firm.deactivation_reason_update',
+            targetType: 'firm',
+            targetId: tenant.id,
+            targetLabel: tenant.firmName,
+            summary: `Updated deactivation reason for ${tenant.firmName}`,
+            metadata: { previousReason: previous, reason: trimmed },
+          });
+        }
       }
       return this.getFirm(id);
     }
@@ -293,11 +344,28 @@ export class AdminService {
       await this.invalidateSessionsForUserIds(
         (await this.userRepo.find({ where: { tenantId: id }, select: ['id'] })).map((u) => u.id),
       );
+      await this.recordAudit({
+        actor,
+        action: 'firm.deactivate',
+        targetType: 'firm',
+        targetId: tenant.id,
+        targetLabel: tenant.firmName,
+        summary: `Deactivated firm ${tenant.firmName}`,
+        metadata: { reason: tenant.deactivationReason },
+      });
     } else {
       tenant.isActive = true;
       tenant.deactivationReason = null;
       tenant.deactivatedAt = null;
       await this.tenantRepo.save(tenant);
+      await this.recordAudit({
+        actor,
+        action: 'firm.activate',
+        targetType: 'firm',
+        targetId: tenant.id,
+        targetLabel: tenant.firmName,
+        summary: `Activated firm ${tenant.firmName}`,
+      });
     }
 
     return this.getFirm(id);
@@ -307,7 +375,7 @@ export class AdminService {
    * Force-logout every user in a firm: revoke refresh tokens and invalidate access JWTs.
    * Does not deactivate the firm — users can sign in again.
    */
-  async invalidateFirmSessions(tenantId: string): Promise<AdminFirmDetail> {
+  async invalidateFirmSessions(tenantId: string, actor: AdminActor): Promise<AdminFirmDetail> {
     const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
     if (!tenant) throw new NotFoundException('Firm not found');
 
@@ -316,6 +384,15 @@ export class AdminService {
       select: ['id'],
     });
     await this.invalidateSessionsForUserIds(users.map((u) => u.id));
+    await this.recordAudit({
+      actor,
+      action: 'firm.invalidate_sessions',
+      targetType: 'firm',
+      targetId: tenant.id,
+      targetLabel: tenant.firmName,
+      summary: `Force-logged out all users for ${tenant.firmName}`,
+      metadata: { userCount: users.length },
+    });
     return this.getFirm(tenantId);
   }
 
@@ -323,17 +400,31 @@ export class AdminService {
    * Force-logout a single user on a firm (compromise / support).
    * Does not deactivate the user account.
    */
-  async invalidateUserSessions(tenantId: string, userId: string): Promise<AdminFirmDetail> {
+  async invalidateUserSessions(
+    tenantId: string,
+    userId: string,
+    actor: AdminActor,
+  ): Promise<AdminFirmDetail> {
     const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
     if (!tenant) throw new NotFoundException('Firm not found');
 
     const user = await this.userRepo.findOne({
       where: { id: userId, tenantId },
-      select: ['id'],
+      select: ['id', 'email', 'firstName', 'lastName'],
     });
     if (!user) throw new NotFoundException('User not found on this firm');
 
     await this.invalidateSessionsForUserIds([user.id]);
+    const label = `${user.firstName} ${user.lastName}`.trim() || user.email;
+    await this.recordAudit({
+      actor,
+      action: 'user.invalidate_sessions',
+      targetType: 'user',
+      targetId: user.id,
+      targetLabel: label,
+      summary: `Force-logged out ${label} on ${tenant.firmName}`,
+      metadata: { tenantId: tenant.id, firmName: tenant.firmName, email: user.email },
+    });
     return this.getFirm(tenantId);
   }
 
@@ -388,6 +479,7 @@ export class AdminService {
   async updateEnquiry(
     id: string,
     patch: { status?: EnquiryStatus; internalNote?: string | null },
+    actor: AdminActor,
   ): Promise<AdminEnquiryItem> {
     const enquiry = await this.enquiryRepo.findOne({ where: { id } });
     if (!enquiry) throw new NotFoundException('Enquiry not found');
@@ -395,6 +487,9 @@ export class AdminService {
     if (patch.status === undefined && patch.internalNote === undefined) {
       throw new BadRequestException('Provide status and/or internalNote to update.');
     }
+
+    const previousStatus = enquiry.status;
+    const previousNote = enquiry.internalNote ?? null;
 
     if (patch.status !== undefined) {
       enquiry.status = patch.status;
@@ -405,7 +500,107 @@ export class AdminService {
     }
 
     const saved = await this.enquiryRepo.save(enquiry);
+    const label = `${saved.name} (${saved.firm})`;
+    const parts: string[] = [];
+    if (patch.status !== undefined && patch.status !== previousStatus) {
+      parts.push(`status ${previousStatus} → ${patch.status}`);
+    }
+    if (patch.internalNote !== undefined && (enquiry.internalNote ?? null) !== previousNote) {
+      parts.push(enquiry.internalNote ? 'internal note updated' : 'internal note cleared');
+    }
+    await this.recordAudit({
+      actor,
+      action: 'enquiry.update',
+      targetType: 'enquiry',
+      targetId: saved.id,
+      targetLabel: label,
+      summary:
+        parts.length > 0
+          ? `Updated enquiry ${label}: ${parts.join(', ')}`
+          : `Updated enquiry ${label}`,
+      metadata: {
+        previousStatus,
+        status: saved.status,
+        noteChanged:
+          patch.internalNote !== undefined && (saved.internalNote ?? null) !== previousNote,
+      },
+    });
     return this.toEnquiryItem(saved);
+  }
+
+  async listAuditLogs(opts: {
+    page?: number;
+    limit?: number;
+    action?: AdminAuditAction;
+    search?: string;
+  }): Promise<AdminAuditLogListResponse> {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(100, Math.max(1, opts.limit ?? 20));
+    const search = opts.search?.trim();
+
+    const qb = this.auditLogRepo
+      .createQueryBuilder('a')
+      .orderBy('a.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (opts.action) {
+      qb.andWhere('a.action = :action', { action: opts.action });
+    }
+
+    if (search) {
+      const q = `%${search.toLowerCase()}%`;
+      qb.andWhere(
+        new Brackets((w) => {
+          w.where('LOWER(a.actorEmail) LIKE :q', { q })
+            .orWhere('LOWER(a.targetLabel) LIKE :q', { q })
+            .orWhere('LOWER(a.summary) LIKE :q', { q });
+        }),
+      );
+    }
+
+    const [rows, total] = await qb.getManyAndCount();
+
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        actorUserId: row.actorUserId,
+        actorEmail: row.actorEmail ?? null,
+        action: row.action,
+        targetType: row.targetType,
+        targetId: row.targetId,
+        targetLabel: row.targetLabel ?? null,
+        summary: row.summary,
+        metadata: (row.metadata as Record<string, unknown> | null) ?? null,
+        createdAt: row.createdAt.toISOString(),
+      })),
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  private async recordAudit(input: {
+    actor: AdminActor;
+    action: AdminAuditAction;
+    targetType: AdminAuditTargetType;
+    targetId: string;
+    targetLabel?: string | null;
+    summary: string;
+    metadata?: Record<string, unknown> | null;
+  }): Promise<void> {
+    const row = this.auditLogRepo.create({
+      actorUserId: input.actor.userId,
+      actorEmail: input.actor.email?.trim() || null,
+      action: input.action,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      targetLabel: input.targetLabel ?? null,
+      summary: input.summary,
+      metadata: input.metadata ?? null,
+    });
+    await this.auditLogRepo.save(row);
   }
 
   private toEnquiryItem(e: Enquiry): AdminEnquiryItem {

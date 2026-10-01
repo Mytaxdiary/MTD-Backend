@@ -8,6 +8,7 @@ import { Enquiry } from '../enquiries/entities/enquiry.entity';
 import { Client } from '../clients/entities/client.entity';
 import { HmrcConnection } from '../hmrc/entities/hmrc-connection.entity';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
+import { AdminAuditLog } from './entities/admin-audit-log.entity';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 
@@ -15,7 +16,15 @@ import { AdminService } from './admin.service';
   imports: [
     AuthModule,
     UsersModule,
-    TypeOrmModule.forFeature([Tenant, User, Enquiry, Client, HmrcConnection, RefreshToken]),
+    TypeOrmModule.forFeature([
+      Tenant,
+      User,
+      Enquiry,
+      Client,
+      HmrcConnection,
+      RefreshToken,
+      AdminAuditLog,
+    ]),
   ],
   controllers: [AdminController],
   providers: [AdminService],

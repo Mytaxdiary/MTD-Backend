@@ -34,6 +34,7 @@ import { AdminFirmsQueryDto } from './dto/admin-firms-query.dto';
 import { SetFirmActiveDto } from './dto/set-firm-active.dto';
 import { AdminEnquiriesQueryDto } from './dto/admin-enquiries-query.dto';
 import { UpdateEnquiryDto } from './dto/update-enquiry.dto';
+import { AdminAuditLogsQueryDto } from './dto/admin-audit-logs-query.dto';
 
 interface AuthRequest extends ExpressRequest {
   user: RequestUser;
@@ -53,6 +54,10 @@ export class AdminController {
     private readonly authService: AuthService,
     private readonly adminService: AdminService,
   ) {}
+
+  private actorFrom(req: AuthRequest) {
+    return { userId: req.user.userId, email: req.user.email };
+  }
 
   @Get('me')
   @ApiOperation({ summary: 'Current platform admin profile' })
@@ -106,8 +111,12 @@ export class AdminController {
   @ApiOkResponse({ description: 'Updated firm detail' })
   @ApiNotFoundResponse({ description: 'Firm not found' })
   @ApiBadRequestResponse({ description: 'Invalid payload' })
-  setFirmActive(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetFirmActiveDto) {
-    return this.adminService.setFirmActive(id, dto.isActive, dto.reason);
+  setFirmActive(
+    @Request() req: AuthRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetFirmActiveDto,
+  ) {
+    return this.adminService.setFirmActive(id, dto.isActive, dto.reason, this.actorFrom(req));
   }
 
   @Post('firms/:id/invalidate-sessions')
@@ -119,8 +128,8 @@ export class AdminController {
   })
   @ApiOkResponse({ description: 'Firm detail after session invalidation' })
   @ApiNotFoundResponse({ description: 'Firm not found' })
-  invalidateFirmSessions(@Param('id', ParseUUIDPipe) id: string) {
-    return this.adminService.invalidateFirmSessions(id);
+  invalidateFirmSessions(@Request() req: AuthRequest, @Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.invalidateFirmSessions(id, this.actorFrom(req));
   }
 
   @Post('firms/:id/users/:userId/invalidate-sessions')
@@ -133,10 +142,11 @@ export class AdminController {
   @ApiOkResponse({ description: 'Firm detail after session invalidation' })
   @ApiNotFoundResponse({ description: 'Firm or user not found' })
   invalidateUserSessions(
+    @Request() req: AuthRequest,
     @Param('id', ParseUUIDPipe) id: string,
     @Param('userId', ParseUUIDPipe) userId: string,
   ) {
-    return this.adminService.invalidateUserSessions(id, userId);
+    return this.adminService.invalidateUserSessions(id, userId, this.actorFrom(req));
   }
 
   @Get('enquiries')
@@ -171,10 +181,34 @@ export class AdminController {
   @ApiOkResponse({ description: 'Updated enquiry' })
   @ApiNotFoundResponse({ description: 'Enquiry not found' })
   @ApiBadRequestResponse({ description: 'Invalid payload' })
-  updateEnquiry(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateEnquiryDto) {
-    return this.adminService.updateEnquiry(id, {
-      status: dto.status,
-      internalNote: dto.internalNote,
+  updateEnquiry(
+    @Request() req: AuthRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateEnquiryDto,
+  ) {
+    return this.adminService.updateEnquiry(
+      id,
+      {
+        status: dto.status,
+        internalNote: dto.internalNote,
+      },
+      this.actorFrom(req),
+    );
+  }
+
+  @Get('audit-logs')
+  @ApiOperation({ summary: 'Paginated admin action audit log' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'action', required: false, type: String })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiOkResponse({ description: 'Audit log page' })
+  listAuditLogs(@Query() query: AdminAuditLogsQueryDto) {
+    return this.adminService.listAuditLogs({
+      page: query.page,
+      limit: query.limit,
+      action: query.action,
+      search: query.search,
     });
   }
 }

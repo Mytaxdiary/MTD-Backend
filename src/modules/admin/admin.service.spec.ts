@@ -9,10 +9,12 @@ import { Enquiry } from '../enquiries/entities/enquiry.entity';
 import { Client } from '../clients/entities/client.entity';
 import { HmrcConnection } from '../hmrc/entities/hmrc-connection.entity';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
+import { AdminAuditLog } from './entities/admin-audit-log.entity';
 
 describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () => {
   const tenantId = 'tenant-1';
   const userId = 'user-1';
+  const actor = { userId: 'admin-1', email: 'admin@mytaxdiary.co.uk' };
 
   const mockTenantRepo = {
     findOne: jest.fn(),
@@ -54,6 +56,12 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
 
   const mockRefreshTokenRepo = {
     createQueryBuilder: jest.fn(() => refreshQb),
+  };
+
+  const mockAuditLogRepo = {
+    create: jest.fn((row) => row),
+    save: jest.fn(async (row) => ({ id: 'audit-1', ...row })),
+    createQueryBuilder: jest.fn(),
   };
 
   let service: AdminService;
@@ -117,6 +125,7 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
         { provide: getRepositoryToken(Client), useValue: mockClientRepo },
         { provide: getRepositoryToken(HmrcConnection), useValue: mockHmrcRepo },
         { provide: getRepositoryToken(RefreshToken), useValue: mockRefreshTokenRepo },
+        { provide: getRepositoryToken(AdminAuditLog), useValue: mockAuditLogRepo },
       ],
     }).compile();
 
@@ -130,7 +139,7 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
       mockTenantRepo.findOne.mockResolvedValue(tenant);
       mockUserRepo.find.mockResolvedValue([{ id: userId }, { id: 'user-2' }]);
 
-      await service.setFirmActive(tenantId, false, 'Suspected compromise');
+      await service.setFirmActive(tenantId, false, 'Suspected compromise', actor);
 
       expect(tenant.isActive).toBe(false);
       expect(tenant.deactivationReason).toBe('Suspected compromise');
@@ -152,7 +161,7 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
       });
       mockTenantRepo.findOne.mockResolvedValue(tenant);
 
-      await service.setFirmActive(tenantId, true);
+      await service.setFirmActive(tenantId, true, undefined, actor);
 
       expect(tenant.isActive).toBe(true);
       expect(tenant.deactivationReason).toBeNull();
@@ -170,7 +179,7 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
       });
       mockTenantRepo.findOne.mockResolvedValue(tenant);
 
-      await service.setFirmActive(tenantId, false, 'Updated reason');
+      await service.setFirmActive(tenantId, false, 'Updated reason', actor);
 
       expect(tenant.deactivationReason).toBe('Updated reason');
       expect(mockTenantRepo.save).toHaveBeenCalledWith(tenant);
@@ -179,14 +188,14 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
 
     it('rejects empty reason string when provided on deactivate', async () => {
       mockTenantRepo.findOne.mockResolvedValue(activeTenant());
-      await expect(service.setFirmActive(tenantId, false, '   ')).rejects.toBeInstanceOf(
+      await expect(service.setFirmActive(tenantId, false, '   ', actor)).rejects.toBeInstanceOf(
         BadRequestException,
       );
     });
 
     it('throws when firm is missing', async () => {
       mockTenantRepo.findOne.mockResolvedValue(null);
-      await expect(service.setFirmActive(tenantId, false)).rejects.toBeInstanceOf(
+      await expect(service.setFirmActive(tenantId, false, undefined, actor)).rejects.toBeInstanceOf(
         NotFoundException,
       );
     });
@@ -198,7 +207,7 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
       mockTenantRepo.findOne.mockResolvedValue(tenant);
       mockUserRepo.find.mockResolvedValue([{ id: userId }, { id: 'user-2' }]);
 
-      await service.invalidateFirmSessions(tenantId);
+      await service.invalidateFirmSessions(tenantId, actor);
 
       expect(tenant.isActive).toBe(true);
       expect(mockTenantRepo.save).not.toHaveBeenCalled();
@@ -212,9 +221,14 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
 
     it('force-logs out a single user on the firm', async () => {
       mockTenantRepo.findOne.mockResolvedValue(activeTenant());
-      mockUserRepo.findOne.mockResolvedValue({ id: userId });
+      mockUserRepo.findOne.mockResolvedValue({
+        id: userId,
+        email: 'james@harris.co.uk',
+        firstName: 'James',
+        lastName: 'Parker',
+      });
 
-      await service.invalidateUserSessions(tenantId, userId);
+      await service.invalidateUserSessions(tenantId, userId, actor);
 
       expect(mockUserRepo.update).toHaveBeenCalledWith(
         { id: In([userId]) },
@@ -227,9 +241,9 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
       mockTenantRepo.findOne.mockResolvedValue(activeTenant());
       mockUserRepo.findOne.mockResolvedValue(null);
 
-      await expect(service.invalidateUserSessions(tenantId, 'other-user')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.invalidateUserSessions(tenantId, 'other-user', actor),
+      ).rejects.toBeInstanceOf(NotFoundException);
       expect(mockUserRepo.update).not.toHaveBeenCalled();
     });
 
@@ -237,7 +251,7 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
       mockTenantRepo.findOne.mockResolvedValue(activeTenant());
       mockUserRepo.find.mockResolvedValue([]);
 
-      await service.invalidateFirmSessions(tenantId);
+      await service.invalidateFirmSessions(tenantId, actor);
 
       expect(mockUserRepo.update).not.toHaveBeenCalled();
       expect(refreshQb.execute).not.toHaveBeenCalled();
@@ -267,34 +281,41 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
       const enquiry = makeEnquiry();
       mockEnquiryRepo.findOne.mockResolvedValue(enquiry);
 
-      const result = await service.updateEnquiry('enq-1', { status: 'contacted' });
+      const result = await service.updateEnquiry('enq-1', { status: 'contacted' }, actor);
 
       expect(enquiry.status).toBe('contacted');
       expect(mockEnquiryRepo.save).toHaveBeenCalledWith(enquiry);
       expect(result.status).toBe('contacted');
       expect(result.email).toBe('alex@smith.co.uk');
+      expect(mockAuditLogRepo.save).toHaveBeenCalled();
     });
 
     it('trims internal notes and stores null for blank note', async () => {
       const enquiry = makeEnquiry({ status: 'contacted', internalNote: 'old' });
       mockEnquiryRepo.findOne.mockResolvedValue(enquiry);
 
-      const result = await service.updateEnquiry('enq-1', { internalNote: '  Called back  ' });
+      const result = await service.updateEnquiry(
+        'enq-1',
+        { internalNote: '  Called back  ' },
+        actor,
+      );
       expect(result.internalNote).toBe('Called back');
 
-      await service.updateEnquiry('enq-1', { internalNote: '   ' });
+      await service.updateEnquiry('enq-1', { internalNote: '   ' }, actor);
       expect(enquiry.internalNote).toBeNull();
     });
 
     it('rejects empty patch', async () => {
       mockEnquiryRepo.findOne.mockResolvedValue(makeEnquiry());
-      await expect(service.updateEnquiry('enq-1', {})).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.updateEnquiry('enq-1', {}, actor)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
 
     it('throws when enquiry is missing', async () => {
       mockEnquiryRepo.findOne.mockResolvedValue(null);
       await expect(
-        service.updateEnquiry('missing', { status: 'contacted' }),
+        service.updateEnquiry('missing', { status: 'contacted' }, actor),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
