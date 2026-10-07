@@ -285,6 +285,7 @@ export class HmrcService {
       response = await this.hmrcApiClient.fetch(url, {
         method: 'GET',
         accessToken,
+        skipFraudHeaders: true,
         headers: { Accept: 'application/vnd.hmrc.1.0+json' },
       });
     } catch (err) {

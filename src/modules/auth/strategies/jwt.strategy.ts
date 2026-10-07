@@ -13,6 +13,7 @@ import {
   normalizePermissions,
   resolveAppRole,
 } from '../../users/permissions';
+import { evaluateBillingAccess } from '../../billing/billing-access.util';
 
 export interface JwtPayload {
   /** Subject — userId (UUID) */
@@ -96,6 +97,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException(
         'This firm account has been deactivated. Please contact support.',
       );
+    }
+    // Trial expired / unpaid — block firm JWTs (admins unaffected)
+    if (role !== 'admin' && user.tenant) {
+      const billing = evaluateBillingAccess(user.tenant);
+      if (!billing.allowed) {
+        throw new UnauthorizedException(billing.message ?? 'Subscription required');
+      }
     }
 
     // Reject tokens issued for the wrong audience (e.g. role changed after issue)

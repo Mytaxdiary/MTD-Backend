@@ -4,14 +4,11 @@ import type {
   FraudPreventionClientPayload,
   HmrcFraudRequestContext,
 } from './fraud-prevention.types';
-import {
-  formatVendorLicenseIds,
-  isPublicIpv4,
-  isValidPublicPort,
-  normalizeIp,
-} from './fraud-prevention.ip.util';
+import { isPublicIpv4, isValidPublicPort, normalizeIp } from './fraud-prevention.ip.util';
 
 const CONNECTION_METHOD = 'WEB_APP_VIA_SERVER';
+/** Spec example port — never send this. */
+const BANNED_EXAMPLE_PORTS = new Set(['12345']);
 
 function pct(value: string): string {
   return encodeURIComponent(value);
@@ -24,6 +21,21 @@ function formatScreens(screens: FraudPreventionClientPayload['screens']): string
         `width=${s.width}&height=${s.height}&scaling-factor=${s.scalingFactor}&colour-depth=${s.colourDepth}`,
     )
     .join(',');
+}
+
+/** Window must not exceed primary screen (HMRC cross-check). */
+export function clampWindowToScreens(
+  windowWidth: number,
+  windowHeight: number,
+  screens: FraudPreventionClientPayload['screens'],
+): { width: number; height: number } {
+  const primary = screens?.[0];
+  const maxW = primary?.width && primary.width > 0 ? primary.width : windowWidth;
+  const maxH = primary?.height && primary.height > 0 ? primary.height : windowHeight;
+  return {
+    width: Math.max(1, Math.min(Math.floor(windowWidth), maxW)),
+    height: Math.max(1, Math.min(Math.floor(windowHeight), maxH)),
+  };
 }
 
 function formatPublicIpTimestamp(iso?: string): string {
@@ -45,9 +57,13 @@ function resolvePublicClientIp(ctx: HmrcFraudRequestContext): string | undefined
 }
 
 function resolveClientPort(ctx: HmrcFraudRequestContext, devFallback?: string): string | undefined {
-  const port = ctx.clientPublicPort ?? ctx.client?.publicPort;
-  if (port && isValidPublicPort(port)) return port;
-  if (devFallback && isValidPublicPort(devFallback)) return devFallback;
+  const candidates = [ctx.clientPublicPort, ctx.client?.publicPort, devFallback].filter(
+    Boolean,
+  ) as string[];
+  for (const port of candidates) {
+    if (BANNED_EXAMPLE_PORTS.has(port)) continue;
+    if (isValidPublicPort(port)) return port;
+  }
   return undefined;
 }
 
@@ -68,12 +84,7 @@ export class HmrcFraudHeadersBuilder {
       this.configService.get<string>('hmrc.vendorVersion') ?? 'mtd-api=1.0.0&mtd-app=1.0.0';
     headers['Gov-Vendor-Version'] = vendorVersion;
 
-    const licenseIds = formatVendorLicenseIds(
-      this.configService.get<string>('hmrc.vendorLicenseIds'),
-    );
-    if (licenseIds) {
-      headers['Gov-Vendor-License-IDs'] = licenseIds;
-    }
+    // HMRC SDS: omit Gov-Vendor-License-IDs — we do not collect license keys on device.
 
     const vendorPublicIpRaw = this.configService.get<string>('hmrc.vendorPublicIp');
     const vendorPublicIp =
@@ -86,12 +97,12 @@ export class HmrcFraudHeadersBuilder {
 
     const client = ctx.client;
     if (client) {
+      const window = clampWindowToScreens(client.windowWidth, client.windowHeight, client.screens);
       headers['Gov-Client-Browser-JS-User-Agent'] = client.userAgent;
       headers['Gov-Client-Device-ID'] = client.deviceId;
       headers['Gov-Client-Timezone'] = client.timezone;
       headers['Gov-Client-Screens'] = formatScreens(client.screens);
-      headers['Gov-Client-Window-Size'] =
-        `width=${client.windowWidth}&height=${client.windowHeight}`;
+      headers['Gov-Client-Window-Size'] = `width=${window.width}&height=${window.height}`;
       headers['Gov-Client-User-IDs'] = `my-application=${pct(ctx.userEmail)}`;
 
       const clientIp = resolvePublicClientIp(ctx);
@@ -117,8 +128,7 @@ export class HmrcFraudHeadersBuilder {
       headers['Gov-Client-User-IDs'] = `my-application=${pct(ctx.userEmail)}`;
     }
 
-    // Gov-Client-Multi-Factor — only set when a second factor (TOTP) was used.
-    // PASSWORD is not a valid MFA type for this header; omitting is preferable to sending invalid data.
+    // Gov-Client-Multi-Factor — only when TOTP was used this session (HMRC: omit otherwise).
     if (ctx.mfaAuthenticated) {
       const loginTimestamp = pct(
         ctx.loginAt ? new Date(ctx.loginAt * 1000).toISOString() : new Date().toISOString(),

@@ -35,4 +35,33 @@ export class Tenant extends BaseEntity {
 
   @Column({ name: 'deactivated_at', type: 'datetime', nullable: true })
   deactivatedAt?: Date | null;
+
+  /**
+   * Billing lifecycle. Existing firms migrate as `active`.
+   * New signups are set to `trial` by BillingService.
+   */
+  @Column({ name: 'billing_status', type: 'varchar', length: 32, default: 'active' })
+  billingStatus: string;
+
+  @Column({ name: 'trial_starts_at', type: 'datetime', nullable: true })
+  trialStartsAt?: Date | null;
+
+  @Column({ name: 'trial_ends_at', type: 'datetime', nullable: true })
+  trialEndsAt?: Date | null;
+
+  @Column({ name: 'trial_email_domain', type: 'varchar', length: 255, nullable: true })
+  trialEmailDomain?: string | null;
+
+  @Column({ name: 'stripe_customer_id', type: 'varchar', length: 255, nullable: true })
+  stripeCustomerId?: string | null;
+
+  @Column({ name: 'stripe_subscription_id', type: 'varchar', length: 255, nullable: true })
+  stripeSubscriptionId?: string | null;
+
+  @Column({ name: 'included_client_allowance', type: 'int', default: 50 })
+  includedClientAllowance: number;
+
+  /** Optional cache; live counts use BillingService.countBillableClients. */
+  @Column({ name: 'billable_client_count', type: 'int', nullable: true })
+  billableClientCount?: number | null;
 }

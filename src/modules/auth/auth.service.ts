@@ -14,6 +14,7 @@ import { authenticator } from 'otplib';
 import { UsersService } from '../users/users.service';
 import { TenantsService } from '../tenants/tenants.service';
 import { MailService } from '../mail/mail.service';
+import { BillingService } from '../billing/billing.service';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { PasswordResetToken } from './entities/password-reset-token.entity';
 import { EmailVerificationToken } from './entities/email-verification-token.entity';
@@ -22,6 +23,7 @@ import { LoginDto } from './dto/login.dto';
 import { hashPassword, comparePassword } from '../../common/helpers/crypto.helper';
 import { encrypt, decrypt, isEncrypted } from '../hmrc/crypto.util';
 import { User } from '../users/entities/user.entity';
+import type { Tenant } from '../tenants/entities/tenant.entity';
 import type {
   AuthResponse,
   AuthUserResponse,
@@ -51,6 +53,7 @@ export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly tenantsService: TenantsService,
+    private readonly billingService: BillingService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
@@ -65,10 +68,13 @@ export class AuthService {
   // ── Register ────────────────────────────────────────────────────────────
 
   async register(dto: RegisterDto): Promise<AuthResponse> {
-    const exists = await this.usersService.emailExists(dto.email.toLowerCase());
+    const email = dto.email.toLowerCase();
+    const exists = await this.usersService.emailExists(email);
     if (exists) {
       throw new ConflictException('An account with this email already exists');
     }
+
+    await this.billingService.assertTrialDomainAvailable(email);
 
     const passwordHash = await hashPassword(dto.password);
     const role = await this.usersService.findOrCreateOwnerRole();
@@ -77,14 +83,16 @@ export class AuthService {
     // Pre-fill contact info from the registering user so Firm Details isn't blank
     const tenant = await this.tenantsService.create(dto.practiceName, {
       contactName: `${dto.firstName} ${dto.lastName}`.trim(),
-      contactEmail: dto.email.toLowerCase(),
+      contactEmail: email,
     });
+
+    const trialTenant = await this.billingService.startTrialForNewTenant(tenant.id, email);
 
     const user = await this.usersService.create({
       firstName: dto.firstName,
       lastName: dto.lastName,
       firmName: dto.practiceName,
-      email: dto.email.toLowerCase(),
+      email,
       passwordHash,
       role,
       tenantId: tenant.id,
@@ -95,7 +103,9 @@ export class AuthService {
 
     // Send emails before returning — fire-and-forget fails on serverless (Vercel)
     try {
-      await this.mailService.sendWelcomeEmail(user.email, user.firstName);
+      await this.mailService.sendWelcomeEmail(user.email, user.firstName, {
+        trialEndsAt: trialTenant.trialEndsAt ?? undefined,
+      });
     } catch (err: unknown) {
       this.logger.error('Failed to send welcome email', err);
     }
@@ -107,7 +117,7 @@ export class AuthService {
 
     return {
       ...tokens,
-      user: this.toAuthUser(user),
+      user: await this.buildAuthUser(user),
     };
   }
 
@@ -136,6 +146,7 @@ export class AuthService {
           'This firm account has been deactivated. Please contact support.',
         );
       }
+      this.billingService.assertTenantBillingAccess(tenant);
     }
 
     await this.usersService.updateLastLogin(user.id);
@@ -161,7 +172,7 @@ export class AuthService {
         accessTokenExpiresAt: '',
         requiresMfa: true,
         mfaToken,
-        user: this.toAuthUser(user),
+        user: await this.buildAuthUser(user),
       };
     }
 
@@ -169,7 +180,7 @@ export class AuthService {
 
     return {
       ...tokens,
-      user: this.toAuthUser(user),
+      user: await this.buildAuthUser(user),
     };
   }
 
@@ -206,7 +217,7 @@ export class AuthService {
         accessTokenExpiresAt: '',
         requiresMfa: true,
         mfaToken,
-        user: this.toAuthUser(user),
+        user: await this.buildAuthUser(user),
       };
     }
 
@@ -214,7 +225,7 @@ export class AuthService {
 
     return {
       ...tokens,
-      user: this.toAuthUser(user),
+      user: await this.buildAuthUser(user),
     };
   }
 
@@ -340,7 +351,7 @@ export class AuthService {
 
     return {
       ...tokens,
-      user: this.toAuthUser(user),
+      user: await this.buildAuthUser(user),
     };
   }
 
@@ -413,14 +424,12 @@ export class AuthService {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException();
 
-    const tenant = user.tenantId ? await this.tenantsService.findById(user.tenantId) : null;
-    return this.toAuthUser(user, tenant?.firmName);
+    return this.buildAuthUser(user);
   }
 
   async updateProfile(userId: string, firstName: string, lastName: string) {
     const updated = await this.usersService.updateName(userId, firstName.trim(), lastName.trim());
-    const tenant = updated.tenantId ? await this.tenantsService.findById(updated.tenantId) : null;
-    return this.toAuthUser(updated, tenant?.firmName);
+    return this.buildAuthUser(updated);
   }
 
   // ── Refresh tokens ───────────────────────────────────────────────────────
@@ -501,6 +510,7 @@ export class AuthService {
           'This firm account has been deactivated. Please contact support.',
         );
       }
+      this.billingService.assertTenantBillingAccess(tenant);
     }
 
     // Preserve MFA flag from the original login session across rotation
@@ -587,25 +597,33 @@ export class AuthService {
       user.tenantId ?? '',
       mfaAuthenticated,
     );
-    return { ...tokens, user: this.toAuthUser(user) };
+    return { ...tokens, user: await this.buildAuthUser(user) };
   }
 
-  private toAuthUser(user: User, firmNameOverride?: string): AuthUserResponse {
+  private async buildAuthUser(user: User): Promise<AuthUserResponse> {
+    const tenant = user.tenantId ? await this.tenantsService.findById(user.tenantId) : null;
+    return this.toAuthUser(user, tenant);
+  }
+
+  private toAuthUser(user: User, tenant?: Tenant | null): AuthUserResponse {
     const role = resolveAppRole(user.role?.name);
     const permissions =
       role === 'admin' ? EMPTY_PERMISSIONS : normalizePermissions(user.permissions, role);
+    const trialEndsAt = tenant?.trialEndsAt ? new Date(tenant.trialEndsAt).toISOString() : null;
     return {
       id: user.id,
       name: `${user.firstName} ${user.lastName}`,
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
-      firmName: firmNameOverride ?? user.firmName,
+      firmName: tenant?.firmName ?? user.firmName,
       isEmailVerified: user.isEmailVerified,
       mfaEnabled: user.mfaEnabled,
       tenantId: user.tenantId ?? null,
       role,
       permissions,
+      billingStatus: tenant?.billingStatus ?? null,
+      trialEndsAt,
     };
   }
 

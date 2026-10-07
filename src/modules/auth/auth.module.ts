@@ -16,6 +16,7 @@ import { UsersModule } from '../users/users.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { MailModule } from '../mail/mail.module';
 import { TeamModule } from '../team/team.module';
+import { BillingModule } from '../billing/billing.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { TeamModule } from '../team/team.module';
     TenantsModule,
     MailModule,
     TeamModule,
+    BillingModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, TokenCleanupService, JwtStrategy, JwtAuthGuard],

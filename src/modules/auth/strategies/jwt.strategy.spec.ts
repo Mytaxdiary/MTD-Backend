@@ -86,6 +86,37 @@ describe('JwtStrategy — session and firm access product rules', () => {
     await expect(strategy.validate(payload())).rejects.toThrow(/deactivated/);
   });
 
+  it('rejects firm users when the trial has ended', async () => {
+    mockUserRepo.findOne.mockResolvedValue(
+      firmUser({
+        tenant: {
+          id: 'tenant-1',
+          isActive: true,
+          billingStatus: 'trial',
+          trialEndsAt: new Date('2020-01-01T00:00:00.000Z'),
+        },
+      }),
+    );
+
+    await expect(strategy.validate(payload())).rejects.toThrow(/TRIAL_EXPIRED/);
+  });
+
+  it('allows firm users still inside an active trial', async () => {
+    mockUserRepo.findOne.mockResolvedValue(
+      firmUser({
+        tenant: {
+          id: 'tenant-1',
+          isActive: true,
+          billingStatus: 'trial',
+          trialEndsAt: new Date(Date.now() + 86_400_000),
+        },
+      }),
+    );
+
+    const result = await strategy.validate(payload());
+    expect(result.userId).toBe('user-1');
+  });
+
   it('still allows platform admins when no firm tenant applies', async () => {
     mockUserRepo.findOne.mockResolvedValue({
       id: 'admin-1',

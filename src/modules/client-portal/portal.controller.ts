@@ -22,6 +22,8 @@ import { PortalJwtGuard } from './guards/portal-jwt.guard';
 import { PortalService } from './portal.service';
 import type { PortalRequestUser } from './strategies/portal-jwt.strategy';
 import { ClientPortalReplyDto } from './dto/client-portal-reply.dto';
+import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
+import type { HmrcFraudRequestContext } from '../hmrc/fraud-prevention.types';
 
 @ApiTags('Client Portal')
 @ApiBearerAuth('access-token')
@@ -32,6 +34,11 @@ export class PortalController {
 
   private user(req: ExpressRequest): PortalRequestUser {
     return req.user as PortalRequestUser;
+  }
+
+  private fraudContext(req: ExpressRequest): HmrcFraudRequestContext {
+    const u = this.user(req);
+    return buildHmrcFraudRequestContext(req, u.email);
   }
 
   @Get('me')
@@ -46,28 +53,28 @@ export class PortalController {
   @ApiOperation({ summary: 'HMRC quarterly obligations for this client' })
   getObligations(@Request() req: ExpressRequest) {
     const { clientId, tenantId } = this.user(req);
-    return this.portalService.getObligations(clientId, tenantId);
+    return this.portalService.getObligations(clientId, tenantId, this.fraudContext(req));
   }
 
   @Get('itsa-status')
   @ApiOperation({ summary: 'HMRC ITSA (MTD) enrolment status for this client' })
   getItsaStatus(@Request() req: ExpressRequest) {
     const { clientId, tenantId } = this.user(req);
-    return this.portalService.getItsaStatus(clientId, tenantId);
+    return this.portalService.getItsaStatus(clientId, tenantId, this.fraudContext(req));
   }
 
   @Get('submissions')
   @ApiOperation({ summary: 'YTD submitted income and expenses from HMRC for this client' })
   getSubmissions(@Request() req: ExpressRequest) {
     const { clientId, tenantId } = this.user(req);
-    return this.portalService.getSubmissions(clientId, tenantId);
+    return this.portalService.getSubmissions(clientId, tenantId, this.fraudContext(req));
   }
 
   @Get('liabilities')
   @ApiOperation({ summary: 'HMRC SA balance and transactions for this client' })
   getLiabilities(@Request() req: ExpressRequest) {
     const { clientId, tenantId } = this.user(req);
-    return this.portalService.getLiabilities(clientId, tenantId);
+    return this.portalService.getLiabilities(clientId, tenantId, this.fraudContext(req));
   }
 
   @Get('messages')

@@ -20,6 +20,10 @@ export interface AuthUserResponse {
   mfaEnabled?: boolean;
   role: AppRole;
   permissions: StaffPermissions;
+  /** Firm billing lifecycle — from tenant (null for platform admins). */
+  billingStatus?: string | null;
+  /** ISO timestamp when free trial ends — only set while on trial. */
+  trialEndsAt?: string | null;
 }
 
 export interface AuthResponse {

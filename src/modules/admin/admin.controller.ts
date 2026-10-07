@@ -3,6 +3,7 @@ import {
   Get,
   Patch,
   Post,
+  Delete,
   Body,
   Param,
   Query,
@@ -29,12 +30,14 @@ import { AuthAudience } from '../../common/decorators/auth-audience.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { RequestUser } from '../auth/strategies/jwt.strategy';
 import { AuthService } from '../auth/auth.service';
+import { BillingService } from '../billing/billing.service';
 import { AdminService } from './admin.service';
 import { AdminFirmsQueryDto } from './dto/admin-firms-query.dto';
 import { SetFirmActiveDto } from './dto/set-firm-active.dto';
 import { AdminEnquiriesQueryDto } from './dto/admin-enquiries-query.dto';
 import { UpdateEnquiryDto } from './dto/update-enquiry.dto';
 import { AdminAuditLogsQueryDto } from './dto/admin-audit-logs-query.dto';
+import { ClearTrialDomainDto } from './dto/clear-trial-domain.dto';
 
 interface AuthRequest extends ExpressRequest {
   user: RequestUser;
@@ -53,6 +56,7 @@ export class AdminController {
   constructor(
     private readonly authService: AuthService,
     private readonly adminService: AdminService,
+    private readonly billingService: BillingService,
   ) {}
 
   private actorFrom(req: AuthRequest) {
@@ -210,5 +214,19 @@ export class AdminController {
       action: query.action,
       search: query.search,
     });
+  }
+
+  @Delete('billing/trial-domains')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Clear a corporate email domain trial lock',
+    description:
+      'Support-only: removes the domain from the trial registry so another signup can start a trial.',
+  })
+  @ApiOkResponse({ description: 'Domain cleared' })
+  @ApiNotFoundResponse({ description: 'Domain not locked' })
+  @ApiBadRequestResponse({ description: 'Invalid payload' })
+  clearTrialDomain(@Body() dto: ClearTrialDomainDto) {
+    return this.billingService.clearTrialDomain(dto.domain);
   }
 }

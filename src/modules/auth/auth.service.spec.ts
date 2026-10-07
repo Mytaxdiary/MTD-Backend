@@ -7,6 +7,7 @@ import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { TenantsService } from '../tenants/tenants.service';
 import { MailService } from '../mail/mail.service';
+import { BillingService } from '../billing/billing.service';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { PasswordResetToken } from './entities/password-reset-token.entity';
 import { EmailVerificationToken } from './entities/email-verification-token.entity';
@@ -77,6 +78,15 @@ const mockMailService = {
   sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
 };
 
+const mockBillingService = {
+  assertTrialDomainAvailable: jest.fn().mockResolvedValue(undefined),
+  startTrialForNewTenant: jest.fn().mockResolvedValue({
+    id: 'tenant-1',
+    trialEndsAt: new Date('2099-01-01'),
+  }),
+  assertTenantBillingAccess: jest.fn(),
+};
+
 const mockRefreshTokenRepo = {
   create: jest.fn().mockReturnValue({}),
   save: jest.fn().mockResolvedValue({}),
@@ -106,12 +116,15 @@ describe('AuthService — login()', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     mockTenantsService.findById.mockResolvedValue({ id: 'tenant-1', isActive: true });
+    mockBillingService.assertTenantBillingAccess.mockReset();
+    mockBillingService.assertTenantBillingAccess.mockImplementation(() => undefined);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: UsersService, useValue: mockUsersService },
         { provide: TenantsService, useValue: mockTenantsService },
+        { provide: BillingService, useValue: mockBillingService },
         { provide: JwtService, useValue: mockJwtService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: MailService, useValue: mockMailService },
@@ -163,6 +176,24 @@ describe('AuthService — login()', () => {
     await expect(
       service.login({ email: user.email, password: 'correct-password' }),
     ).rejects.toThrow(/deactivated/i);
+  });
+
+  it('blocks login when billing access is denied', async () => {
+    const user = makeUser();
+    mockUsersService.findByEmail.mockResolvedValue(user);
+    jest.spyOn(cryptoHelper, 'comparePassword').mockResolvedValue(true);
+    mockTenantsService.findById.mockResolvedValue({
+      id: 'tenant-1',
+      isActive: true,
+      billingStatus: 'trial',
+    });
+    mockBillingService.assertTenantBillingAccess.mockImplementation(() => {
+      throw new UnauthorizedException('Your free trial has ended. [TRIAL_EXPIRED]');
+    });
+
+    await expect(
+      service.login({ email: user.email, password: 'correct-password' }),
+    ).rejects.toThrow(/TRIAL_EXPIRED/);
   });
 
   // ── Wrong / missing user ────────────────────────────────────────────────────

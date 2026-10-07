@@ -7,6 +7,7 @@ import { ChaseLogsService, chasePeriodRowKey } from '../chase-logs/chase-logs.se
 import type { ListChaseClientsQueryDto } from './dto/list-chase-clients-query.dto';
 import type { RequestUser } from '../auth/strategies/jwt.strategy';
 import { staffClientWhere } from '../clients/staff-client-scope.util';
+import type { HmrcFraudRequestContext } from '../hmrc/fraud-prevention.types';
 import {
   chaseGreetingName,
   currentChaseQuarter,
@@ -92,6 +93,7 @@ export class ChaseService {
     tenantId: string,
     query: ListChaseClientsQueryDto = {},
     actor?: RequestUser | null,
+    fraudContext?: HmrcFraudRequestContext | null,
   ): Promise<ChaseClientsPage> {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(50, Math.max(1, Number(query.limit) || 5));
@@ -135,7 +137,7 @@ export class ChaseService {
     }
 
     const expanded = await mapPool(pageClients, HMRC_CONCURRENCY, async (c) =>
-      this.expandClientOpenPeriods(tenantId, c),
+      this.expandClientOpenPeriods(tenantId, c, fraudContext),
     );
     let rows = expanded.flat();
 
@@ -183,11 +185,15 @@ export class ChaseService {
   /**
    * Internal: walk every authorised client page for auto-chase (no UI pagination).
    */
+  /**
+   * Cron / auto-chase: no browser fraud context — uses calendar fallback only
+   * (never calls HMRC bare without Gov-* headers).
+   */
   async listAllNeedsChasing(tenantId: string): Promise<ChaseClientDto[]> {
-    const first = await this.listNeedsChasing(tenantId, { page: 1, limit: 5 });
+    const first = await this.listNeedsChasing(tenantId, { page: 1, limit: 5 }, null, null);
     const all = [...first.clients];
     for (let p = 2; p <= first.totalPages; p++) {
-      const next = await this.listNeedsChasing(tenantId, { page: p, limit: 5 });
+      const next = await this.listNeedsChasing(tenantId, { page: p, limit: 5 }, null, null);
       all.push(...next.clients);
     }
     return all;
@@ -196,13 +202,23 @@ export class ChaseService {
   private async expandClientOpenPeriods(
     tenantId: string,
     client: Client,
+    fraudContext?: HmrcFraudRequestContext | null,
   ): Promise<ChaseClientDto[]> {
+    // Without browser-collected headers, do not hit HMRC (HMRC SDS missing-header findings).
+    if (!fraudContext?.client?.deviceId) {
+      this.logger.warn(
+        `No fraud context for client ${client.id}; using calendar fallback (no HMRC call)`,
+      );
+      return this.fallbackBusinessRows(tenantId, client, null);
+    }
+
     const { fromDate, toDate } = currentUkTaxYearDateRange();
     try {
       const res = await this.clientsService.getIncomeAndExpenditureObligations(
         tenantId,
         client.id,
         { fromDate, toDate, status: 'open' },
+        fraudContext,
       );
       const groups = res.obligations ?? [];
       const rows: ChaseClientDto[] = [];
@@ -256,11 +272,15 @@ export class ChaseService {
         `Obligations fetch failed for client ${client.id}; using calendar fallback`,
         err instanceof Error ? err.message : String(err),
       );
-      return this.fallbackBusinessRows(tenantId, client);
+      return this.fallbackBusinessRows(tenantId, client, fraudContext);
     }
   }
 
-  private async fallbackBusinessRows(tenantId: string, client: Client): Promise<ChaseClientDto[]> {
+  private async fallbackBusinessRows(
+    tenantId: string,
+    client: Client,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<ChaseClientDto[]> {
     const quarter = currentChaseQuarter();
     const toIsoDate = (d: Date) => {
       const y = d.getFullYear();
@@ -274,10 +294,16 @@ export class ChaseService {
 
     let businesses: Array<{ businessId: string; typeOfBusiness: string; tradingName?: string }> =
       [];
-    try {
-      businesses = await this.clientsService.listBusinessIncomeSources(tenantId, client.id);
-    } catch {
-      businesses = [];
+    if (fraudContext?.client?.deviceId) {
+      try {
+        businesses = await this.clientsService.listBusinessIncomeSources(
+          tenantId,
+          client.id,
+          fraudContext,
+        );
+      } catch {
+        businesses = [];
+      }
     }
 
     const sources =

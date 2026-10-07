@@ -7,6 +7,7 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import type { RequestUser } from '../auth/strategies/jwt.strategy';
 import { ChaseService } from './chase.service';
 import { ListChaseClientsQueryDto } from './dto/list-chase-clients-query.dto';
+import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
 
 @ApiTags('chase')
 @ApiBearerAuth('access-token')
@@ -23,6 +24,12 @@ export class ChaseController {
   })
   listNeedsChasing(@Request() req: ExpressRequest, @Query() query: ListChaseClientsQueryDto) {
     const actor = req.user as RequestUser;
-    return this.service.listNeedsChasing(actor.tenantId, query, actor);
+    const fraudContext = buildHmrcFraudRequestContext(
+      req,
+      actor.email,
+      actor.loginAt,
+      actor.mfaAuthenticated,
+    );
+    return this.service.listNeedsChasing(actor.tenantId, query, actor, fraudContext);
   }
 }

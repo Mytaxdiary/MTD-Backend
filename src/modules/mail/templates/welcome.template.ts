@@ -5,7 +5,18 @@ const CARD = `width="100%" style="max-width:520px;background:#fff;border-radius:
 const BRAND = `style="margin:0 0 6px;font-size:13px;color:#6b7280;font-weight:600;letter-spacing:.04em;text-transform:uppercase"`;
 const BTN = `style="display:inline-block;padding:12px 28px;background:#2563EB;color:#fff;font-size:14px;font-weight:700;border-radius:8px;text-decoration:none"`;
 
-export function welcomeTemplate(firstName: string, loginUrl: string): string {
+export function welcomeTemplate(
+  firstName: string,
+  loginUrl: string,
+  options?: { trialEndsAt?: Date | string },
+): string {
+  const trialLine = options?.trialEndsAt
+    ? `<p style="margin:0 0 24px;font-size:14px;color:#374151;line-height:1.6">
+            Your free trial runs until <strong>${formatTrialEnd(options.trialEndsAt)}</strong>.
+            No card is required to get started.
+          </p>`
+    : '';
+
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -19,6 +30,7 @@ export function welcomeTemplate(firstName: string, loginUrl: string): string {
           <p style="margin:0 0 24px;font-size:14px;color:#374151;line-height:1.6">
             Your My Tax Diary agent account is ready. Sign in to start managing your clients and quarterly submissions.
           </p>
+          ${trialLine}
           <a href="${loginUrl}" ${BTN}>Sign in</a>
         </td></tr>
       </table>
@@ -27,4 +39,14 @@ export function welcomeTemplate(firstName: string, loginUrl: string): string {
   ${EMAIL_LEGAL_FOOTER}
 </body>
 </html>`;
+}
+
+function formatTrialEnd(value: Date | string): string {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
 }

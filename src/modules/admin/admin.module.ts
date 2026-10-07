@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { UsersModule } from '../users/users.module';
+import { BillingModule } from '../billing/billing.module';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { User } from '../users/entities/user.entity';
 import { Enquiry } from '../enquiries/entities/enquiry.entity';
@@ -16,6 +17,7 @@ import { AdminService } from './admin.service';
   imports: [
     AuthModule,
     UsersModule,
+    BillingModule,
     TypeOrmModule.forFeature([
       Tenant,
       User,

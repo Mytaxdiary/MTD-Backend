@@ -1,5 +1,5 @@
 import * as tls from 'tls';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { HmrcFraudHeadersBuilder } from './hmrc-fraud-headers.builder';
 import type { HmrcFraudRequestContext } from './fraud-prevention.types';
 import { retryWithBackoff, type RetryOptions } from './hmrc-retry.util';
@@ -34,6 +34,11 @@ export interface HmrcFetchOptions extends Omit<RequestInit, 'headers'> {
   headers?: Record<string, string>;
   accessToken?: string;
   fraudContext?: HmrcFraudRequestContext | null;
+  /**
+   * Only for non-MTD helpers (e.g. validation-feedback) that must not invent
+   * client device headers. Default false = refuse bare HMRC calls.
+   */
+  skipFraudHeaders?: boolean;
   /** Override retry behaviour — pass `{ maxRetries: 0 }` to disable. */
   retry?: RetryOptions;
 }
@@ -51,19 +56,59 @@ export class HmrcApiClient implements OnModuleInit {
   }
 
   async fetch(url: string, options: HmrcFetchOptions = {}): Promise<Response> {
-    const { accessToken, fraudContext, headers: extraHeaders, retry, ...init } = options;
+    const {
+      accessToken,
+      fraudContext,
+      skipFraudHeaders = false,
+      headers: extraHeaders,
+      retry,
+      ...init
+    } = options;
 
     const headers: Record<string, string> = {
-      // Default to versioned HMRC vendor MIME type (callers override per endpoint)
       Accept: HMRC_ACCEPT_DEFAULT,
-      ...(fraudContext ? this.fraudHeadersBuilder.build(fraudContext) : {}),
       ...(extraHeaders ?? {}),
     };
+
+    if (!skipFraudHeaders) {
+      this.assertFraudContext(fraudContext, url);
+      Object.assign(headers, this.fraudHeadersBuilder.build(fraudContext!));
+    }
 
     if (accessToken) {
       headers.Authorization = `Bearer ${accessToken}`;
     }
 
     return retryWithBackoff(() => fetch(url, { ...init, headers }), retry);
+  }
+
+  /**
+   * Fail closed: never call MTD APIs without browser-collected client fields.
+   * Missing X-Hmrc-Fraud-Context was the root cause of HMRC "Header required"
+   * findings (Connection-Method / Device-ID / Timezone / User-IDs / vendor).
+   */
+  private assertFraudContext(
+    fraudContext: HmrcFraudRequestContext | null | undefined,
+    url: string,
+  ): void {
+    if (!fraudContext) {
+      this.logger.error(`Refusing HMRC call without fraudContext: ${url}`);
+      throw new BadRequestException(
+        'Browser fraud prevention data is required for HMRC API calls. Refresh the page and try again.',
+      );
+    }
+    const client = fraudContext.client;
+    if (!client?.deviceId || !client.userAgent || !client.timezone) {
+      this.logger.error(`Refusing HMRC call with incomplete fraud client payload: ${url}`);
+      throw new BadRequestException(
+        'Incomplete browser fraud prevention data. Refresh the page and try again.',
+      );
+    }
+    if (!fraudContext.userEmail?.trim()) {
+      this.logger.error(`Refusing HMRC call without userEmail for Gov-Client-User-IDs: ${url}`);
+      throw new BadRequestException(
+        'Signed-in user identity is required for HMRC fraud prevention headers.',
+      );
+    }
   }
 }

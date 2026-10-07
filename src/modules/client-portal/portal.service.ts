@@ -31,6 +31,7 @@ import type {
   BalanceAndTransactionsResponse,
   HmrcAccountDocumentDetail,
 } from '../clients/hmrc-accounts.types';
+import type { HmrcFraudRequestContext } from '../hmrc/fraud-prevention.types';
 
 const UPLOAD_BASE_DIR = path.join(process.cwd(), 'uploads', 'portal-files');
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -228,7 +229,7 @@ export class PortalService {
     };
   }
 
-  async getObligations(clientId: string, tenantId: string) {
+  async getObligations(clientId: string, tenantId: string, fraudContext: HmrcFraudRequestContext) {
     const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
     if (!client) throw new NotFoundException('Client not found');
     if (!client.authorisedAt)
@@ -241,6 +242,7 @@ export class PortalService {
 
       const res = await this.hmrcApiClient.fetch(url, {
         accessToken,
+        fraudContext,
         headers: { Accept: 'application/vnd.hmrc.3.0+json' },
       });
       if (!res.ok)
@@ -295,7 +297,7 @@ export class PortalService {
     }
   }
 
-  async getItsaStatus(clientId: string, tenantId: string) {
+  async getItsaStatus(clientId: string, tenantId: string, fraudContext: HmrcFraudRequestContext) {
     const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
     if (!client) throw new NotFoundException('Client not found');
     if (!client.authorisedAt) return { message: 'HMRC authorisation pending', itsaStatuses: [] };
@@ -310,6 +312,7 @@ export class PortalService {
 
       const res = await this.hmrcApiClient.fetch(url, {
         accessToken,
+        fraudContext,
         headers: { Accept: 'application/vnd.hmrc.2.0+json' },
       });
       if (!res.ok) return { message: 'Could not load HMRC status', itsaStatuses: [] };
@@ -321,7 +324,7 @@ export class PortalService {
     }
   }
 
-  async getSubmissions(clientId: string, tenantId: string) {
+  async getSubmissions(clientId: string, tenantId: string, fraudContext: HmrcFraudRequestContext) {
     const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
     if (!client) throw new NotFoundException('Client not found');
     if (!client.authorisedAt)
@@ -344,6 +347,7 @@ export class PortalService {
 
       const res = await this.hmrcApiClient.fetch(url, {
         accessToken,
+        fraudContext,
         headers: { Accept: 'application/vnd.hmrc.1.0+json' },
       });
       if (!res.ok)
@@ -370,7 +374,7 @@ export class PortalService {
     }
   }
 
-  async getLiabilities(clientId: string, tenantId: string) {
+  async getLiabilities(clientId: string, tenantId: string, fraudContext: HmrcFraudRequestContext) {
     const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
     if (!client) throw new NotFoundException('Client not found');
     if (!client.authorisedAt)
@@ -389,6 +393,7 @@ export class PortalService {
 
       const res = await this.hmrcApiClient.fetch(url, {
         accessToken,
+        fraudContext,
         headers: { Accept: 'application/vnd.hmrc.4.0+json' },
       });
       if (!res.ok)

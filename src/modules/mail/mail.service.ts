@@ -114,12 +114,26 @@ export class MailService {
     );
   }
 
-  async sendWelcomeEmail(to: string, firstName: string): Promise<void> {
+  async sendWelcomeEmail(
+    to: string,
+    firstName: string,
+    options?: { trialEndsAt?: Date | string },
+  ): Promise<void> {
+    const trialPlain = options?.trialEndsAt
+      ? `\n\nYour free trial runs until ${new Date(options.trialEndsAt).toLocaleDateString(
+          'en-GB',
+          {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          },
+        )}. No card is required to get started.`
+      : '';
     await this.send(
       to,
       'Welcome to My Tax Diary',
-      welcomeTemplate(firstName, this.loginUrl),
-      `Hi ${firstName},\n\nYour My Tax Diary account is ready. Sign in at:\n${this.loginUrl}\n\nThe My Tax Diary team`,
+      welcomeTemplate(firstName, this.loginUrl, options),
+      `Hi ${firstName},\n\nYour My Tax Diary account is ready. Sign in at:\n${this.loginUrl}${trialPlain}\n\nThe My Tax Diary team`,
     );
   }
 

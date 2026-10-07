@@ -24,6 +24,8 @@ export interface PortalRequestUser {
   clientId: string;
   tenantId: string;
   isPreview: boolean;
+  /** Used for Gov-Client-User-IDs on portal → HMRC calls. */
+  email: string;
 }
 
 @Injectable()
@@ -54,6 +56,7 @@ export class PortalJwtStrategy extends PassportStrategy(Strategy, PORTAL_JWT_STR
         clientId: payload.clientId,
         tenantId: payload.tenantId,
         isPreview: true,
+        email: `preview+${payload.clientId}@mytaxdiary.local`,
       };
     }
 
@@ -66,6 +69,7 @@ export class PortalJwtStrategy extends PassportStrategy(Strategy, PORTAL_JWT_STR
       clientId: payload.clientId,
       tenantId: payload.tenantId,
       isPreview: false,
+      email: cu.email,
     };
   }
 }

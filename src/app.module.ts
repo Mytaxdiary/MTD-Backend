@@ -27,6 +27,7 @@ import { EmailConnectionsModule } from './modules/email-connections/email-connec
 import { TeamModule } from './modules/team/team.module';
 import { EnquiriesModule } from './modules/enquiries/enquiries.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { BillingModule } from './modules/billing/billing.module';
 import hmrcConfig from './config/hmrc.config';
 import emailConfig from './config/email.config';
 
@@ -88,6 +89,7 @@ import emailConfig from './config/email.config';
     TeamModule,
     EnquiriesModule,
     AdminModule,
+    BillingModule,
   ],
   controllers: [AppController],
   providers: [
