@@ -8,6 +8,7 @@ import { staffClientWhere } from '../clients/staff-client-scope.util';
 import type { RequestUser } from '../auth/strategies/jwt.strategy';
 import { ChaseLogsService } from '../chase-logs/chase-logs.service';
 import { currentChaseQuarter, type QuarterInfo } from '../chase/chase-template-vars.util';
+import type { HmrcFraudRequestContext } from '../hmrc/fraud-prevention.types';
 import {
   derivePipelineStatus,
   resolvePipelineStatus,
@@ -136,7 +137,11 @@ export class DashboardService {
     private readonly clientPipelineService: ClientPipelineService,
   ) {}
 
-  async getSummary(tenantId: string, actor?: RequestUser | null): Promise<DashboardSummary> {
+  async getSummary(
+    tenantId: string,
+    actor?: RequestUser | null,
+    fraudContext?: HmrcFraudRequestContext | null,
+  ): Promise<DashboardSummary> {
     const where = staffClientWhere(tenantId, actor, {}, { excludePortalOnly: true });
     const clients = await this.clientRepo.find({
       where,
@@ -162,7 +167,12 @@ export class DashboardService {
         : new Map();
 
     const authorised = clients.filter((c) => !!c.authorisedAt);
-    const submittedIds = await this.findSubmittedClientIds(tenantId, authorised, quarter);
+    const submittedIds = await this.findSubmittedClientIds(
+      tenantId,
+      authorised,
+      quarter,
+      fraudContext,
+    );
 
     if (submittedIds.size > 0) {
       await this.clientPipelineService.markSubmittedMany(tenantId, [...submittedIds]);
@@ -239,9 +249,16 @@ export class DashboardService {
     tenantId: string,
     authorised: Client[],
     quarter: QuarterInfo,
+    fraudContext?: HmrcFraudRequestContext | null,
   ): Promise<Set<string>> {
     const submitted = new Set<string>();
     if (authorised.length === 0) return submitted;
+
+    // Without browser fraud headers, skip HMRC (do not call bare).
+    if (!fraudContext?.client?.deviceId) {
+      this.logger.debug('Dashboard submitted check skipped — missing fraud context');
+      return submitted;
+    }
 
     const fromDate = ymd(quarter.periodStartDate);
     const toDate = ymd(quarter.periodEndDate);
@@ -253,7 +270,7 @@ export class DashboardService {
           tenantId,
           client.id,
           { fromDate, toDate },
-          null,
+          fraudContext,
         );
         const details = (res.obligations ?? []).flatMap((o) => o.obligationDetails ?? []);
         const match = details.find(
