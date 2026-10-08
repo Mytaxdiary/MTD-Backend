@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { Client } from '../clients/entities/client.entity';
+import { User } from '../users/entities/user.entity';
 import { PlatformSetting } from './entities/platform-setting.entity';
 import { TrialEmailDomain } from './entities/trial-email-domain.entity';
 import {
@@ -20,6 +21,7 @@ import {
 import { emailDomain, isCorporateTrialDomain } from './email-domain.util';
 import { evaluateBillingAccess } from './billing-access.util';
 import { calcMonthlyFee, type MonthlyFeeQuote } from './pricing.util';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class BillingService {
@@ -34,6 +36,9 @@ export class BillingService {
     private readonly settingRepo: Repository<PlatformSetting>,
     @InjectRepository(TrialEmailDomain)
     private readonly trialDomainRepo: Repository<TrialEmailDomain>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+    private readonly mailService: MailService,
   ) {}
 
   async getTrialDays(): Promise<number> {
@@ -153,13 +158,88 @@ export class BillingService {
     return this.clientRepo.count({ where: { tenantId } });
   }
 
-  async quoteForTenant(tenantId: string): Promise<MonthlyFeeQuote & { allowance: number }> {
+  async quoteForTenant(tenantId: string): Promise<
+    MonthlyFeeQuote & {
+      allowance: number;
+      billingStatus: string;
+      trialStartsAt: string | null;
+      trialEndsAt: string | null;
+      /** Stripe period end — null until Checkout/webhooks land. */
+      nextRenewalAt: string | null;
+      hasStripeCustomer: boolean;
+    }
+  > {
     const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
     const count = await this.countBillableClients(tenantId);
     const quote = calcMonthlyFee(count);
     return {
       ...quote,
-      allowance: tenant?.includedClientAllowance ?? 50,
+      allowance: tenant?.includedClientAllowance ?? BILLING_INCLUDED_CLIENTS,
+      billingStatus: tenant?.billingStatus ?? 'active',
+      trialStartsAt: tenant?.trialStartsAt ? new Date(tenant.trialStartsAt).toISOString() : null,
+      trialEndsAt: tenant?.trialEndsAt ? new Date(tenant.trialEndsAt).toISOString() : null,
+      nextRenewalAt: tenant?.billingPeriodEndsAt
+        ? new Date(tenant.billingPeriodEndsAt).toISOString()
+        : null,
+      hasStripeCustomer: !!tenant?.stripeCustomerId,
+    };
+  }
+
+  /**
+   * Stripe webhook helper — always emails the firm owner (billing-critical).
+   * No-op (logged) if owner cannot be resolved.
+   */
+  async notifyOwnerPaymentFailed(tenantId: string): Promise<void> {
+    const ctx = await this.ownerMailContext(tenantId);
+    if (!ctx) return;
+    await this.mailService.sendPaymentFailedEmail(ctx.email, {
+      firstName: ctx.firstName,
+      firmName: ctx.firmName,
+    });
+  }
+
+  /** Stripe webhook helper — payment succeeded / invoice.paid. */
+  async notifyOwnerPaymentSucceeded(
+    tenantId: string,
+    opts?: { amountLabel?: string | null },
+  ): Promise<void> {
+    const ctx = await this.ownerMailContext(tenantId);
+    if (!ctx) return;
+    await this.mailService.sendPaymentSucceededEmail(ctx.email, {
+      firstName: ctx.firstName,
+      firmName: ctx.firmName,
+      amountLabel: opts?.amountLabel ?? null,
+    });
+  }
+
+  private async ownerMailContext(
+    tenantId: string,
+  ): Promise<{ email: string; firstName: string; firmName: string } | null> {
+    const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
+    if (!tenant) {
+      this.logger.warn(`notifyOwner*: tenant ${tenantId} not found`);
+      return null;
+    }
+
+    const owner = await this.userRepo
+      .createQueryBuilder('u')
+      .innerJoin('u.role', 'r')
+      .where('u.tenant_id = :tenantId', { tenantId })
+      .andWhere('r.name = :owner', { owner: 'owner' })
+      .andWhere('u.is_active = true')
+      .orderBy('u.createdAt', 'ASC')
+      .getOne();
+
+    const email = owner?.email ?? tenant.contactEmail ?? null;
+    if (!email) {
+      this.logger.warn(`notifyOwner*: no owner/contact email for tenant ${tenantId}`);
+      return null;
+    }
+
+    return {
+      email,
+      firstName: owner?.firstName ?? 'there',
+      firmName: tenant.firmName,
     };
   }
 }

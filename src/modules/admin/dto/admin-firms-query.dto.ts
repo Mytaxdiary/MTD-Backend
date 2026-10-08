@@ -1,6 +1,8 @@
-import { IsOptional, IsPositive, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsIn, IsOptional, IsPositive, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+
+const BILLING_STATUS_FILTERS = ['trial', 'active', 'past_due', 'cancelled', 'expired'] as const;
 
 export class AdminFirmsQueryDto {
   @ApiPropertyOptional({ description: 'Page number (1-based)', default: 1, minimum: 1 })
@@ -21,4 +23,12 @@ export class AdminFirmsQueryDto {
   @IsString()
   @MaxLength(200)
   search?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter by tenant billing status',
+    enum: BILLING_STATUS_FILTERS,
+  })
+  @IsOptional()
+  @IsIn(BILLING_STATUS_FILTERS)
+  billingStatus?: (typeof BILLING_STATUS_FILTERS)[number];
 }

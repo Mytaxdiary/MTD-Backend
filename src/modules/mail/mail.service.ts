@@ -51,6 +51,26 @@ import {
   enquiryAlertPlainText,
   type EnquiryAlertEmailData,
 } from './templates/enquiry-alert.template';
+import {
+  trialEndingTemplate,
+  trialEndingPlainText,
+  type TrialEndingEmailData,
+} from './templates/trial-ending.template';
+import {
+  trialExpiredTemplate,
+  trialExpiredPlainText,
+  type TrialExpiredEmailData,
+} from './templates/trial-expired.template';
+import {
+  paymentFailedTemplate,
+  paymentFailedPlainText,
+  type PaymentFailedEmailData,
+} from './templates/payment-failed.template';
+import {
+  paymentSucceededTemplate,
+  paymentSucceededPlainText,
+  type PaymentSucceededEmailData,
+} from './templates/payment-succeeded.template';
 import { EmailConnectionsService } from '../email-connections/email-connections.service';
 
 export type ClientMailSendMeta = {
@@ -66,6 +86,9 @@ export class MailService {
   private readonly from: string;
   private readonly fromEmail: string;
   private readonly loginUrl: string;
+  private readonly pricingUrl: string;
+  private readonly billingUrl: string;
+  private readonly contactUrl: string;
 
   constructor(
     private readonly configService: ConfigService,
@@ -74,11 +97,16 @@ export class MailService {
     const host = configService.get<string>('mail.host');
     const fromEmail = configService.get<string>('mail.from') ?? 'noreply@mtditsa.co.uk';
     const fromName = configService.get<string>('mail.fromName') ?? 'My Tax Diary';
-    const frontendUrl = configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+    const frontendUrl = (
+      configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000'
+    ).replace(/\/$/, '');
 
     this.fromEmail = fromEmail;
     this.from = `"${fromName}" <${fromEmail}>`;
     this.loginUrl = `${frontendUrl}/login`;
+    this.pricingUrl = `${frontendUrl}/site/pricing`;
+    this.billingUrl = `${frontendUrl}/settings?section=billing`;
+    this.contactUrl = `${frontendUrl}/site/contact`;
 
     if (host) {
       this.transporter = nodemailer.createTransport({
@@ -114,6 +142,9 @@ export class MailService {
     );
   }
 
+  /**
+   * Trial started + welcome (sent on register). Includes trial end date when provided.
+   */
   async sendWelcomeEmail(
     to: string,
     firstName: string,
@@ -129,11 +160,90 @@ export class MailService {
           },
         )}. No card is required to get started.`
       : '';
+    const subject = options?.trialEndsAt
+      ? 'Welcome to My Tax Diary: your free trial has started'
+      : 'Welcome to My Tax Diary';
     await this.send(
       to,
-      'Welcome to My Tax Diary',
+      subject,
       welcomeTemplate(firstName, this.loginUrl, options),
       `Hi ${firstName},\n\nYour My Tax Diary account is ready. Sign in at:\n${this.loginUrl}${trialPlain}\n\nThe My Tax Diary team`,
+    );
+  }
+
+  /** Day −2 soft reminder — always sent to the firm owner (billing-critical). */
+  async sendTrialEndingEmail(
+    to: string,
+    data: Omit<TrialEndingEmailData, 'pricingUrl' | 'billingUrl'> & {
+      pricingUrl?: string;
+      billingUrl?: string;
+    },
+  ): Promise<void> {
+    const payload: TrialEndingEmailData = {
+      ...data,
+      pricingUrl: data.pricingUrl ?? this.pricingUrl,
+      billingUrl: data.billingUrl ?? this.billingUrl,
+    };
+    await this.send(
+      to,
+      'Your My Tax Diary free trial ends in 2 days',
+      trialEndingTemplate(payload),
+      trialEndingPlainText(payload),
+    );
+  }
+
+  /** Sent once when the trial window ends without a paid subscription. */
+  async sendTrialExpiredEmail(
+    to: string,
+    data: Omit<TrialExpiredEmailData, 'pricingUrl' | 'contactUrl'> & {
+      pricingUrl?: string;
+      contactUrl?: string;
+    },
+  ): Promise<void> {
+    const payload: TrialExpiredEmailData = {
+      ...data,
+      pricingUrl: data.pricingUrl ?? this.pricingUrl,
+      contactUrl: data.contactUrl ?? this.contactUrl,
+    };
+    await this.send(
+      to,
+      'Your My Tax Diary free trial has ended',
+      trialExpiredTemplate(payload),
+      trialExpiredPlainText(payload),
+    );
+  }
+
+  /** Stripe webhook: invoice.payment_failed — always to owner. */
+  async sendPaymentFailedEmail(
+    to: string,
+    data: Omit<PaymentFailedEmailData, 'billingUrl'> & { billingUrl?: string },
+  ): Promise<void> {
+    const payload: PaymentFailedEmailData = {
+      ...data,
+      billingUrl: data.billingUrl ?? this.billingUrl,
+    };
+    await this.send(
+      to,
+      'Payment failed for your My Tax Diary subscription',
+      paymentFailedTemplate(payload),
+      paymentFailedPlainText(payload),
+    );
+  }
+
+  /** Stripe webhook: invoice.paid — always to owner. */
+  async sendPaymentSucceededEmail(
+    to: string,
+    data: Omit<PaymentSucceededEmailData, 'billingUrl'> & { billingUrl?: string },
+  ): Promise<void> {
+    const payload: PaymentSucceededEmailData = {
+      ...data,
+      billingUrl: data.billingUrl ?? this.billingUrl,
+    };
+    await this.send(
+      to,
+      'Payment received: My Tax Diary subscription active',
+      paymentSucceededTemplate(payload),
+      paymentSucceededPlainText(payload),
     );
   }
 

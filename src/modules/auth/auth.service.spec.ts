@@ -178,22 +178,21 @@ describe('AuthService — login()', () => {
     ).rejects.toThrow(/deactivated/i);
   });
 
-  it('blocks login when billing access is denied', async () => {
+  it('allows login when billing access would otherwise be denied (Checkout path)', async () => {
     const user = makeUser();
     mockUsersService.findByEmail.mockResolvedValue(user);
     jest.spyOn(cryptoHelper, 'comparePassword').mockResolvedValue(true);
     mockTenantsService.findById.mockResolvedValue({
       id: 'tenant-1',
       isActive: true,
-      billingStatus: 'trial',
+      billingStatus: 'expired',
     });
     mockBillingService.assertTenantBillingAccess.mockImplementation(() => {
       throw new UnauthorizedException('Your free trial has ended. [TRIAL_EXPIRED]');
     });
 
-    await expect(
-      service.login({ email: user.email, password: 'correct-password' }),
-    ).rejects.toThrow(/TRIAL_EXPIRED/);
+    const result = await service.login({ email: user.email, password: 'correct-password' });
+    expect(result.accessToken).toBeDefined();
   });
 
   // ── Wrong / missing user ────────────────────────────────────────────────────

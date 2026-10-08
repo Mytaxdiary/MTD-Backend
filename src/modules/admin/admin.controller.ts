@@ -38,6 +38,7 @@ import { AdminEnquiriesQueryDto } from './dto/admin-enquiries-query.dto';
 import { UpdateEnquiryDto } from './dto/update-enquiry.dto';
 import { AdminAuditLogsQueryDto } from './dto/admin-audit-logs-query.dto';
 import { ClearTrialDomainDto } from './dto/clear-trial-domain.dto';
+import { SetTrialDaysDto } from './dto/set-trial-days.dto';
 
 interface AuthRequest extends ExpressRequest {
   user: RequestUser;
@@ -87,12 +88,18 @@ export class AdminController {
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({
+    name: 'billingStatus',
+    required: false,
+    enum: ['trial', 'active', 'past_due', 'cancelled', 'expired'],
+  })
   @ApiOkResponse({ description: 'Firm list page' })
   listFirms(@Query() query: AdminFirmsQueryDto) {
     return this.adminService.listFirms({
       page: query.page,
       limit: query.limit,
       search: query.search,
+      billingStatus: query.billingStatus,
     });
   }
 
@@ -214,6 +221,27 @@ export class AdminController {
       action: query.action,
       search: query.search,
     });
+  }
+
+  @Get('billing/trial-days')
+  @ApiOperation({ summary: 'Get platform default free-trial length (days)' })
+  @ApiOkResponse({ description: 'Current trial_days platform setting' })
+  async getTrialDays() {
+    const days = await this.billingService.getTrialDays();
+    return { days };
+  }
+
+  @Patch('billing/trial-days')
+  @ApiOperation({
+    summary: 'Set platform default free-trial length',
+    description:
+      'Updates platform_settings.trial_days used for new firm signups. Does not change existing trials.',
+  })
+  @ApiOkResponse({ description: 'Updated trial days' })
+  @ApiBadRequestResponse({ description: 'Invalid payload' })
+  async setTrialDays(@Body() dto: SetTrialDaysDto) {
+    const days = await this.billingService.setTrialDays(dto.days);
+    return { days };
   }
 
   @Delete('billing/trial-domains')

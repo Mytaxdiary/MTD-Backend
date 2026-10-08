@@ -2,6 +2,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import type { Request } from 'express';
 import { User } from '../../users/entities/user.entity';
 import { JwtStrategy, type JwtPayload } from './jwt.strategy';
 
@@ -11,6 +12,10 @@ describe('JwtStrategy — session and firm access product rules', () => {
   };
 
   let strategy: JwtStrategy;
+
+  function req(url = '/api/v1/clients'): Request {
+    return { originalUrl: url, url } as Request;
+  }
 
   function payload(overrides: Partial<JwtPayload> = {}): JwtPayload {
     return {
@@ -59,10 +64,10 @@ describe('JwtStrategy — session and firm access product rules', () => {
     const oldIat = Math.floor(invalidatedAt.getTime() / 1000) - 120;
     mockUserRepo.findOne.mockResolvedValue(firmUser({ sessionInvalidatedAt: invalidatedAt }));
 
-    await expect(strategy.validate(payload({ iat: oldIat }))).rejects.toBeInstanceOf(
+    await expect(strategy.validate(req(), payload({ iat: oldIat }))).rejects.toBeInstanceOf(
       UnauthorizedException,
     );
-    await expect(strategy.validate(payload({ iat: oldIat }))).rejects.toThrow(
+    await expect(strategy.validate(req(), payload({ iat: oldIat }))).rejects.toThrow(
       /Session has been revoked/,
     );
   });
@@ -72,7 +77,7 @@ describe('JwtStrategy — session and firm access product rules', () => {
     const freshIat = Math.floor(Date.now() / 1000);
     mockUserRepo.findOne.mockResolvedValue(firmUser({ sessionInvalidatedAt: invalidatedAt }));
 
-    const result = await strategy.validate(payload({ iat: freshIat }));
+    const result = await strategy.validate(req(), payload({ iat: freshIat }));
     expect(result.userId).toBe('user-1');
     expect(result.role).toBe('owner');
     expect(result.audience).toBe('firm');
@@ -83,7 +88,7 @@ describe('JwtStrategy — session and firm access product rules', () => {
       firmUser({ tenant: { id: 'tenant-1', isActive: false } }),
     );
 
-    await expect(strategy.validate(payload())).rejects.toThrow(/deactivated/);
+    await expect(strategy.validate(req(), payload())).rejects.toThrow(/deactivated/);
   });
 
   it('rejects firm users when the trial has ended', async () => {
@@ -98,7 +103,23 @@ describe('JwtStrategy — session and firm access product rules', () => {
       }),
     );
 
-    await expect(strategy.validate(payload())).rejects.toThrow(/TRIAL_EXPIRED/);
+    await expect(strategy.validate(req(), payload())).rejects.toThrow(/TRIAL_EXPIRED/);
+  });
+
+  it('allows expired trial on Checkout path', async () => {
+    mockUserRepo.findOne.mockResolvedValue(
+      firmUser({
+        tenant: {
+          id: 'tenant-1',
+          isActive: true,
+          billingStatus: 'expired',
+          trialEndsAt: new Date('2020-01-01T00:00:00.000Z'),
+        },
+      }),
+    );
+
+    const result = await strategy.validate(req('/api/v1/billing/checkout'), payload());
+    expect(result.userId).toBe('user-1');
   });
 
   it('allows firm users still inside an active trial', async () => {
@@ -113,7 +134,7 @@ describe('JwtStrategy — session and firm access product rules', () => {
       }),
     );
 
-    const result = await strategy.validate(payload());
+    const result = await strategy.validate(req(), payload());
     expect(result.userId).toBe('user-1');
   });
 
@@ -130,6 +151,7 @@ describe('JwtStrategy — session and firm access product rules', () => {
     });
 
     const result = await strategy.validate(
+      req(),
       payload({
         sub: 'admin-1',
         email: 'admin@mytaxdiary.co.uk',
@@ -144,6 +166,6 @@ describe('JwtStrategy — session and firm access product rules', () => {
 
   it('rejects inactive users', async () => {
     mockUserRepo.findOne.mockResolvedValue(firmUser({ isActive: false }));
-    await expect(strategy.validate(payload())).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(strategy.validate(req(), payload())).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });

@@ -14,6 +14,7 @@ import {
   resolveAppRole,
 } from '../../users/permissions';
 import { evaluateBillingAccess } from '../../billing/billing-access.util';
+import { isBillingExemptPath } from '../../billing/billing-access-paths.util';
 
 export interface JwtPayload {
   /** Subject — userId (UUID) */
@@ -60,12 +61,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ]),
       ignoreExpiration: false,
       secretOrKey: configService.get<string>('auth.jwtSecret') ?? 'dev-fallback-secret',
-      passReqToCallback: false,
+      passReqToCallback: true,
     });
   }
 
   /** Validates token payload AND confirms user still exists in DB. */
-  async validate(payload: JwtPayload): Promise<RequestUser> {
+  async validate(req: Request, payload: JwtPayload): Promise<RequestUser> {
     const user = await this.userRepo.findOne({
       where: { id: payload.sub },
       relations: ['tenant'],
@@ -98,10 +99,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         'This firm account has been deactivated. Please contact support.',
       );
     }
-    // Trial expired / unpaid — block firm JWTs (admins unaffected)
+    // Trial expired / unpaid — block firm JWTs except Checkout / Portal / quote / auth
     if (role !== 'admin' && user.tenant) {
       const billing = evaluateBillingAccess(user.tenant);
-      if (!billing.allowed) {
+      if (!billing.allowed && !isBillingExemptPath(req.originalUrl || req.url)) {
         throw new UnauthorizedException(billing.message ?? 'Subscription required');
       }
     }

@@ -138,7 +138,8 @@ export class AuthService {
     const passwordMatch = await comparePassword(dto.password, user.passwordHash);
     if (!passwordMatch) throw invalidCredentials;
 
-    // Deactivated firm — block all tenant users after password is verified
+    // Deactivated firm — block all tenant users after password is verified.
+    // Expired / unpaid billing: still allow login so owners can open Checkout.
     if (user.tenantId) {
       const tenant = await this.tenantsService.findById(user.tenantId);
       if (!tenant || !tenant.isActive) {
@@ -146,7 +147,6 @@ export class AuthService {
           'This firm account has been deactivated. Please contact support.',
         );
       }
-      this.billingService.assertTenantBillingAccess(tenant);
     }
 
     await this.usersService.updateLastLogin(user.id);
@@ -510,7 +510,7 @@ export class AuthService {
           'This firm account has been deactivated. Please contact support.',
         );
       }
-      this.billingService.assertTenantBillingAccess(tenant);
+      // Allow refresh when billing is expired so Checkout can complete.
     }
 
     // Preserve MFA flag from the original login session across rotation

@@ -58,10 +58,22 @@ export class Tenant extends BaseEntity {
   @Column({ name: 'stripe_subscription_id', type: 'varchar', length: 255, nullable: true })
   stripeSubscriptionId?: string | null;
 
+  /** Stripe subscription current_period_end (UTC). */
+  @Column({ name: 'billing_period_ends_at', type: 'datetime', nullable: true })
+  billingPeriodEndsAt?: Date | null;
+
   @Column({ name: 'included_client_allowance', type: 'int', default: 50 })
   includedClientAllowance: number;
 
   /** Optional cache; live counts use BillingService.countBillableClients. */
   @Column({ name: 'billable_client_count', type: 'int', nullable: true })
   billableClientCount?: number | null;
+
+  /** Set when the day−2 trial-ending reminder was sent (idempotent cron). */
+  @Column({ name: 'trial_ending_email_sent_at', type: 'datetime', nullable: true })
+  trialEndingEmailSentAt?: Date | null;
+
+  /** Set when the trial-expired notice was sent (idempotent cron). */
+  @Column({ name: 'trial_expired_email_sent_at', type: 'datetime', nullable: true })
+  trialExpiredEmailSentAt?: Date | null;
 }

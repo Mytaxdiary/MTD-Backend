@@ -63,4 +63,10 @@ export const envValidationSchema = Joi.object({
   JWT_EXPIRES_IN: Joi.string().default('15m'),
   REFRESH_TOKEN_SECRET: Joi.string().min(16).required(),
   REFRESH_TOKEN_EXPIRES_IN: Joi.string().default('7d'),
+
+  // Stripe (optional in local/test — Checkout/Portal need these set)
+  STRIPE_SECRET_KEY: Joi.string().allow('').optional(),
+  STRIPE_WEBHOOK_SECRET: Joi.string().allow('').optional(),
+  STRIPE_PRICE_BASE_ID: Joi.string().allow('').optional(),
+  STRIPE_PRICE_EXTRA_ID: Joi.string().allow('').optional(),
 });

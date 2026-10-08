@@ -30,13 +30,22 @@ import { AdminModule } from './modules/admin/admin.module';
 import { BillingModule } from './modules/billing/billing.module';
 import hmrcConfig from './config/hmrc.config';
 import emailConfig from './config/email.config';
+import stripeConfig from './config/stripe.config';
 
 @Module({
   imports: [
     // Global config — load all namespaces and validate env on startup
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, authConfig, mailConfig, hmrcConfig, emailConfig],
+      load: [
+        appConfig,
+        databaseConfig,
+        authConfig,
+        mailConfig,
+        hmrcConfig,
+        emailConfig,
+        stripeConfig,
+      ],
       validationSchema: envValidationSchema,
       validationOptions: {
         allowUnknown: true,

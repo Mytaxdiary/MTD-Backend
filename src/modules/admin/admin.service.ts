@@ -35,8 +35,10 @@ export interface AdminFirmListItem {
   contactEmail: string | null;
   createdAt: string;
   isActive: boolean;
-  /** Billing plan not modelled yet — always null for now. */
+  /** Legacy package label — unused with usage pricing; kept for FE compat. */
   plan: string | null;
+  billingStatus: string;
+  trialEndsAt: string | null;
   status: 'active' | 'inactive';
 }
 
@@ -70,6 +72,14 @@ export interface AdminFirmDetail {
   createdAt: string;
   isActive: boolean;
   plan: string | null;
+  billingStatus: string;
+  trialStartsAt: string | null;
+  trialEndsAt: string | null;
+  trialEmailDomain: string | null;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+  billableClientCount: number;
+  includedClientAllowance: number;
   status: 'active' | 'inactive';
   deactivationReason: string | null;
   deactivatedAt: string | null;
@@ -183,16 +193,22 @@ export class AdminService {
     page?: number;
     limit?: number;
     search?: string;
+    billingStatus?: string;
   }): Promise<AdminFirmListResponse> {
     const page = Math.max(1, opts.page ?? 1);
     const limit = Math.min(100, Math.max(1, opts.limit ?? 20));
     const search = opts.search?.trim();
+    const billingStatus = opts.billingStatus?.trim();
 
     const qb = this.tenantRepo
       .createQueryBuilder('t')
       .orderBy('t.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
+
+    if (billingStatus) {
+      qb.andWhere('t.billing_status = :billingStatus', { billingStatus });
+    }
 
     if (search) {
       const q = `%${search.toLowerCase()}%`;
@@ -223,6 +239,8 @@ export class AdminService {
       createdAt: t.createdAt.toISOString(),
       isActive: t.isActive,
       plan: null,
+      billingStatus: t.billingStatus ?? 'active',
+      trialEndsAt: t.trialEndsAt ? t.trialEndsAt.toISOString() : null,
       status: t.isActive ? 'active' : 'inactive',
     }));
 
@@ -284,6 +302,14 @@ export class AdminService {
       createdAt: tenant.createdAt.toISOString(),
       isActive: tenant.isActive,
       plan: null,
+      billingStatus: tenant.billingStatus ?? 'active',
+      trialStartsAt: tenant.trialStartsAt ? tenant.trialStartsAt.toISOString() : null,
+      trialEndsAt: tenant.trialEndsAt ? tenant.trialEndsAt.toISOString() : null,
+      trialEmailDomain: tenant.trialEmailDomain ?? null,
+      stripeCustomerId: tenant.stripeCustomerId ?? null,
+      stripeSubscriptionId: tenant.stripeSubscriptionId ?? null,
+      billableClientCount: clientCount,
+      includedClientAllowance: tenant.includedClientAllowance ?? 50,
       status: tenant.isActive ? 'active' : 'inactive',
       deactivationReason: tenant.deactivationReason ?? null,
       deactivatedAt: tenant.deactivatedAt ? tenant.deactivatedAt.toISOString() : null,
