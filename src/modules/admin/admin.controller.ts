@@ -103,6 +103,21 @@ export class AdminController {
     });
   }
 
+  @Delete('firms/by-email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Permanently purge a firm by user email (re-register support)',
+    description:
+      'Hard-deletes the firm/tenant, all its users, clients, and trial-domain lock so the email can register again. Platform admins cannot be purged.',
+  })
+  @ApiQuery({ name: 'email', required: true, type: String, example: 'owner@firm.co.uk' })
+  @ApiOkResponse({ description: 'Firm purged' })
+  @ApiNotFoundResponse({ description: 'No account for that email' })
+  @ApiBadRequestResponse({ description: 'Invalid email or platform admin' })
+  purgeFirmByEmail(@Query('email') email: string, @Request() req: AuthRequest) {
+    return this.adminService.purgeFirmByEmail(email, this.actorFrom(req));
+  }
+
   @Get('firms/:id')
   @ApiOperation({
     summary: 'Firm detail — users, client count, HMRC status, last login',

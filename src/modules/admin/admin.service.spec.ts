@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { In } from 'typeorm';
+import { DataSource, In } from 'typeorm';
 import { AdminService } from './admin.service';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { User } from '../users/entities/user.entity';
@@ -40,6 +40,13 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
 
   const mockClientRepo = {
     count: jest.fn().mockResolvedValue(0),
+    find: jest.fn().mockResolvedValue([]),
+  };
+
+  const mockDataSource = {
+    transaction: jest.fn(async (fn: (m: { query: jest.Mock }) => Promise<void>) =>
+      fn({ query: jest.fn().mockResolvedValue(undefined) }),
+    ),
   };
 
   const mockHmrcRepo = {
@@ -134,6 +141,7 @@ describe('AdminService — firm lifecycle, force logout, enquiry follow-up', () 
         { provide: getRepositoryToken(HmrcConnection), useValue: mockHmrcRepo },
         { provide: getRepositoryToken(RefreshToken), useValue: mockRefreshTokenRepo },
         { provide: getRepositoryToken(AdminAuditLog), useValue: mockAuditLogRepo },
+        { provide: DataSource, useValue: mockDataSource },
       ],
     }).compile();
 

@@ -8,6 +8,7 @@ export type AdminAuditAction =
   | 'firm.deactivate'
   | 'firm.deactivation_reason_update'
   | 'firm.invalidate_sessions'
+  | 'firm.purge'
   | 'user.invalidate_sessions'
   | 'enquiry.update';
 

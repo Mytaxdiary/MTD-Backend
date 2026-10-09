@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, In, Repository } from 'typeorm';
+import { Brackets, DataSource, In, Repository } from 'typeorm';
+import * as fs from 'fs';
+import * as path from 'path';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { User } from '../users/entities/user.entity';
 import { Enquiry, type EnquiryStatus } from '../enquiries/entities/enquiry.entity';
@@ -8,11 +10,14 @@ import { Client } from '../clients/entities/client.entity';
 import { HmrcConnection } from '../hmrc/entities/hmrc-connection.entity';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
 import { resolveFirmRole } from '../users/permissions';
+import { emailDomain } from '../billing/email-domain.util';
 import {
   AdminAuditLog,
   type AdminAuditAction,
   type AdminAuditTargetType,
 } from './entities/admin-audit-log.entity';
+
+const PORTAL_FILES_BASE = path.join(process.cwd(), 'uploads', 'portal-files');
 
 export interface AdminActor {
   userId: string;
@@ -138,6 +143,8 @@ export interface AdminAuditLogListResponse {
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
   constructor(
     @InjectRepository(Tenant)
     private readonly tenantRepo: Repository<Tenant>,
@@ -153,6 +160,7 @@ export class AdminService {
     private readonly refreshTokenRepo: Repository<RefreshToken>,
     @InjectRepository(AdminAuditLog)
     private readonly auditLogRepo: Repository<AdminAuditLog>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async getOverview(): Promise<AdminOverviewStats> {
@@ -604,6 +612,146 @@ export class AdminService {
       limit,
       total,
       totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  /**
+   * Permanently delete a firm by owner/staff email so they can register again.
+   * Hard-deletes the tenant, all firm users, clients, and trial-domain lock.
+   * Admin-only support tool — not for platform admin accounts.
+   */
+  async purgeFirmByEmail(
+    emailRaw: string,
+    actor: AdminActor,
+  ): Promise<{
+    deleted: true;
+    email: string;
+    tenantId: string;
+    firmName: string;
+    usersRemoved: number;
+    clientsRemoved: number;
+    trialDomainCleared: string | null;
+  }> {
+    const email = emailRaw.trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      throw new BadRequestException('A valid email is required');
+    }
+
+    const user = await this.userRepo.findOne({
+      where: { email },
+      relations: ['role'],
+      withDeleted: true,
+    });
+    if (!user) {
+      throw new NotFoundException(`No account found for ${email}`);
+    }
+    if (!user.tenantId || user.role?.name === 'admin') {
+      throw new BadRequestException('Cannot purge a platform admin account');
+    }
+
+    const tenantId = user.tenantId;
+    const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
+    if (!tenant) {
+      throw new NotFoundException(`Firm for ${email} was not found`);
+    }
+
+    const firmUsers = await this.userRepo.find({
+      where: { tenantId },
+      select: ['id', 'email'],
+      withDeleted: true,
+    });
+    const userIds = firmUsers.map((u) => u.id);
+
+    const clients = await this.clientRepo.find({ where: { tenantId }, select: ['id'] });
+    const clientIds = clients.map((c) => c.id);
+    const domain = emailDomain(email);
+
+    const inList = (ids: string[]) => ids.map(() => '?').join(',');
+
+    await this.dataSource.transaction(async (manager) => {
+      if (clientIds.length > 0) {
+        const cIn = inList(clientIds);
+        await manager.query(`DELETE FROM portal_files WHERE client_id IN (${cIn})`, clientIds);
+        await manager.query(`DELETE FROM portal_messages WHERE client_id IN (${cIn})`, clientIds);
+        await manager.query(`DELETE FROM client_users WHERE client_id IN (${cIn})`, clientIds);
+        await manager.query(`DELETE FROM chase_logs WHERE client_id IN (${cIn})`, clientIds);
+        await manager.query(`DELETE FROM client_notes WHERE client_id IN (${cIn})`, clientIds);
+        await manager.query(
+          `DELETE FROM client_status_history WHERE client_id IN (${cIn})`,
+          clientIds,
+        );
+        await manager.query('DELETE FROM clients WHERE tenant_id = ?', [tenantId]);
+      }
+
+      await manager.query('DELETE FROM hmrc_connections WHERE tenant_id = ?', [tenantId]);
+      await manager.query('DELETE FROM chase_templates WHERE tenant_id = ?', [tenantId]);
+      await manager.query('DELETE FROM app_notifications WHERE tenant_id = ?', [tenantId]);
+      await manager.query('DELETE FROM notification_preferences WHERE tenant_id = ?', [tenantId]);
+      await manager.query('DELETE FROM email_connections WHERE tenant_id = ?', [tenantId]);
+      await manager.query('DELETE FROM staff_invites WHERE tenant_id = ?', [tenantId]);
+      await manager.query('DELETE FROM deletion_requests WHERE tenant_id = ?', [tenantId]);
+
+      if (userIds.length > 0) {
+        const uIn = inList(userIds);
+        await manager.query(`DELETE FROM refresh_tokens WHERE user_id IN (${uIn})`, userIds);
+        await manager.query(`DELETE FROM password_reset_tokens WHERE user_id IN (${uIn})`, userIds);
+        await manager.query(
+          `DELETE FROM email_verification_tokens WHERE user_id IN (${uIn})`,
+          userIds,
+        );
+        await manager.query('DELETE FROM users WHERE tenant_id = ?', [tenantId]);
+      }
+
+      if (domain) {
+        await manager.query('DELETE FROM trial_email_domains WHERE domain = ? OR tenant_id = ?', [
+          domain,
+          tenantId,
+        ]);
+      } else {
+        await manager.query('DELETE FROM trial_email_domains WHERE tenant_id = ?', [tenantId]);
+      }
+
+      await manager.query('DELETE FROM tenants WHERE id = ?', [tenantId]);
+    });
+
+    for (const clientId of clientIds) {
+      const dir = path.join(PORTAL_FILES_BASE, clientId);
+      if (fs.existsSync(dir)) {
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch (err) {
+          this.logger.warn(`Could not remove portal files for ${clientId}: ${String(err)}`);
+        }
+      }
+    }
+
+    await this.recordAudit({
+      actor,
+      action: 'firm.purge',
+      targetType: 'firm',
+      targetId: tenantId,
+      targetLabel: tenant.firmName,
+      summary: `Purged firm ${tenant.firmName} (email ${email})`,
+      metadata: {
+        email,
+        usersRemoved: userIds.length,
+        clientsRemoved: clientIds.length,
+        trialDomainCleared: domain,
+      },
+    });
+
+    this.logger.warn(
+      `Purged firm ${tenantId} (${tenant.firmName}) via email ${email} by admin ${actor.userId}`,
+    );
+
+    return {
+      deleted: true,
+      email,
+      tenantId,
+      firmName: tenant.firmName,
+      usersRemoved: userIds.length,
+      clientsRemoved: clientIds.length,
+      trialDomainCleared: domain,
     };
   }
 
