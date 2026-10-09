@@ -38,7 +38,7 @@ export function trialEndingTemplate(data: TrialEndingEmailData): string {
           </p>
           <p style="margin:0 0 24px;font-size:14px;color:#374151;line-height:1.6">
             Subscribe anytime to keep managing clients and quarterly submissions. Pricing is
-            £50/month for up to 50 clients (ex VAT).
+            £50/month for up to 50 clients.
           </p>
           <a href="${data.billingUrl}" ${BTN}>Open Plan &amp; billing</a>
           <p style="margin:24px 0 0;font-size:12px;color:#9ca3af;line-height:1.6">

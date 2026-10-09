@@ -23,7 +23,7 @@ export class BillingController {
   ) {}
 
   @Get('quote')
-  @ApiOperation({ summary: 'Current billable client count and monthly fee (ex-VAT)' })
+  @ApiOperation({ summary: 'Current billable client count and monthly fee' })
   @ApiOkResponse({ description: 'Usage quote for the signed-in firm' })
   async quote(@Request() req: AuthRequest) {
     return this.billingService.quoteForTenant(req.user.tenantId);

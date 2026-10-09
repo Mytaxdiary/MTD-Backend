@@ -1,6 +1,6 @@
 /**
  * Shared pricing math — keep in sync with marketing / Settings displays.
- * Amounts are GBP excluding VAT.
+ * Amounts are GBP.
  */
 
 import {

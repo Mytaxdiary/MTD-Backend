@@ -30,7 +30,7 @@ export function trialExpiredTemplate(data: TrialExpiredEmailData): string {
           </p>
           <p style="margin:0 0 24px;font-size:14px;color:#374151;line-height:1.6">
             Your firm data is kept safe. Subscribe to continue managing clients and HMRC submissions:
-            £50/month for up to 50 clients (ex VAT).
+            £50/month for up to 50 clients.
           </p>
           <a href="${data.pricingUrl}" ${BTN}>View pricing &amp; subscribe</a>
           <p style="margin:24px 0 0;font-size:12px;color:#9ca3af;line-height:1.6">

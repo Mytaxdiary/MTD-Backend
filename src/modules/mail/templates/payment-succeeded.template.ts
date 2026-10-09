@@ -16,7 +16,7 @@ export type PaymentSucceededEmailData = {
 export function paymentSucceededTemplate(data: PaymentSucceededEmailData): string {
   const amountLine = data.amountLabel
     ? `<p style="margin:0 0 16px;font-size:14px;color:#374151;line-height:1.6">
-            Amount: <strong>${data.amountLabel}</strong> (ex VAT where shown on your invoice).
+            Amount: <strong>${data.amountLabel}</strong>.
           </p>`
     : '';
 

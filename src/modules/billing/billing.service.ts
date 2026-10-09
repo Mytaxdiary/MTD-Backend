@@ -47,12 +47,12 @@ export class BillingService {
     });
     if (!row) return DEFAULT_TRIAL_DAYS;
     const n = parseInt(row.value, 10);
-    if (!Number.isFinite(n) || n < 1 || n > 365) return DEFAULT_TRIAL_DAYS;
+    if (!Number.isFinite(n) || n < 0 || n > 365) return DEFAULT_TRIAL_DAYS;
     return n;
   }
 
   async setTrialDays(days: number): Promise<number> {
-    const value = String(Math.min(365, Math.max(1, Math.floor(days))));
+    const value = String(Math.min(365, Math.max(0, Math.floor(days))));
     let row = await this.settingRepo.findOne({ where: { key: PLATFORM_SETTING_TRIAL_DAYS } });
     if (!row) {
       row = this.settingRepo.create({ key: PLATFORM_SETTING_TRIAL_DAYS, value });
