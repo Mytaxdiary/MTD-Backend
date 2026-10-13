@@ -204,6 +204,23 @@ export class BillingStripeService {
     return new Date(end * 1000);
   }
 
+  /** Scheduled end date when cancel is requested but period has not ended yet. */
+  private cancelsAtFromSubscription(sub: Stripe.Subscription): Date | null {
+    if (sub.status === 'canceled') return null;
+    if (typeof sub.cancel_at === 'number' && sub.cancel_at > 0) {
+      return new Date(sub.cancel_at * 1000);
+    }
+    if (sub.cancel_at_period_end) {
+      return this.periodEndFromSubscription(sub);
+    }
+    return null;
+  }
+
+  private applySubscriptionDates(tenant: Tenant, sub: Stripe.Subscription): void {
+    tenant.billingPeriodEndsAt = this.periodEndFromSubscription(sub);
+    tenant.billingCancelsAt = this.cancelsAtFromSubscription(sub);
+  }
+
   private billingStatusFromSubscription(sub: Stripe.Subscription): string {
     if (sub.status === 'active' || sub.status === 'trialing') return 'active';
     if (sub.status === 'past_due' || sub.status === 'unpaid') return 'past_due';
@@ -231,11 +248,12 @@ export class BillingStripeService {
     if (customerId) tenant.stripeCustomerId = customerId;
     if (subscriptionId) tenant.stripeSubscriptionId = subscriptionId;
     tenant.billingStatus = 'active';
+    tenant.billingCancelsAt = null;
 
     if (subscriptionId) {
       try {
         const sub = await this.stripeService.stripe.subscriptions.retrieve(subscriptionId);
-        tenant.billingPeriodEndsAt = this.periodEndFromSubscription(sub);
+        this.applySubscriptionDates(tenant, sub);
       } catch (err) {
         this.logger.warn(`Could not load subscription ${subscriptionId}: ${String(err)}`);
       }
@@ -261,10 +279,11 @@ export class BillingStripeService {
     tenant.stripeSubscriptionId = sub.id;
     if (customerId) tenant.stripeCustomerId = customerId;
     tenant.billingStatus = this.billingStatusFromSubscription(sub);
-    tenant.billingPeriodEndsAt = this.periodEndFromSubscription(sub);
+    this.applySubscriptionDates(tenant, sub);
 
     if (sub.status === 'canceled') {
       tenant.billingStatus = 'cancelled';
+      tenant.billingCancelsAt = null;
     }
 
     await this.tenantRepo.save(tenant);
@@ -308,7 +327,7 @@ export class BillingStripeService {
     if (refs.subscriptionId) {
       try {
         const sub = await this.stripeService.stripe.subscriptions.retrieve(refs.subscriptionId);
-        tenant.billingPeriodEndsAt = this.periodEndFromSubscription(sub);
+        this.applySubscriptionDates(tenant, sub);
       } catch {
         /* ignore */
       }

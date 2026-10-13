@@ -166,6 +166,8 @@ export class BillingService {
       trialEndsAt: string | null;
       /** Stripe period end — null until Checkout/webhooks land. */
       nextRenewalAt: string | null;
+      /** Set when cancel is scheduled; null if not cancelling. */
+      cancelsAt: string | null;
       hasStripeCustomer: boolean;
     }
   > {
@@ -181,6 +183,7 @@ export class BillingService {
       nextRenewalAt: tenant?.billingPeriodEndsAt
         ? new Date(tenant.billingPeriodEndsAt).toISOString()
         : null,
+      cancelsAt: tenant?.billingCancelsAt ? new Date(tenant.billingCancelsAt).toISOString() : null,
       hasStripeCustomer: !!tenant?.stripeCustomerId,
     };
   }

@@ -62,6 +62,13 @@ export class Tenant extends BaseEntity {
   @Column({ name: 'billing_period_ends_at', type: 'datetime', nullable: true })
   billingPeriodEndsAt?: Date | null;
 
+  /**
+   * When set, subscription is scheduled to end (Stripe cancel_at / cancel_at_period_end).
+   * Cleared if the customer resumes before the period ends.
+   */
+  @Column({ name: 'billing_cancels_at', type: 'datetime', nullable: true })
+  billingCancelsAt?: Date | null;
+
   @Column({ name: 'included_client_allowance', type: 'int', default: 50 })
   includedClientAllowance: number;
 
