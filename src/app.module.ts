@@ -28,6 +28,7 @@ import { TeamModule } from './modules/team/team.module';
 import { EnquiriesModule } from './modules/enquiries/enquiries.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { BillingModule } from './modules/billing/billing.module';
+import { OutreachModule } from './modules/outreach/outreach.module';
 import hmrcConfig from './config/hmrc.config';
 import emailConfig from './config/email.config';
 import stripeConfig from './config/stripe.config';
@@ -99,6 +100,7 @@ import stripeConfig from './config/stripe.config';
     EnquiriesModule,
     AdminModule,
     BillingModule,
+    OutreachModule,
   ],
   controllers: [AppController],
   providers: [
