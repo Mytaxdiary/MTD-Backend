@@ -31,6 +31,7 @@ import type {
   BalanceAndTransactionsResponse,
   HmrcAccountDocumentDetail,
 } from '../clients/hmrc-accounts.types';
+import { defaultAccountsDateRange } from '../clients/dto/get-balance-and-transactions-query.dto';
 import type { HmrcFraudRequestContext } from '../hmrc/fraud-prevention.types';
 
 const UPLOAD_BASE_DIR = path.join(process.cwd(), 'uploads', 'portal-files');
@@ -389,14 +390,28 @@ export class PortalService {
     try {
       const accessToken = await this.hmrcService.getValidAccessToken(tenantId);
       const baseUrl = this.configService.get<string>('hmrc.baseUrl')!;
-      const url = `${baseUrl}/accounts/self-assessment/${client.nino}/balance-and-transactions?docNumber=&onlyOpenItems=false&onlyChargeReference=false&includeLocks=false&includeStatistical=false&includeInterest=false&includeCodedOut=false`;
+      // Same query shape as agent Liabilities (SA Accounts v4.0 needs a date range
+      // when onlyOpenItems is false). Empty docNumber= and unrelated flags cause HMRC 4xx.
+      const { fromDate, toDate } = defaultAccountsDateRange();
+      const params = new URLSearchParams({
+        fromDate,
+        toDate,
+        calculateAccruedInterest: 'true',
+      });
+      const url =
+        `${baseUrl}/accounts/self-assessment/` +
+        `${encodeURIComponent(client.nino)}/balance-and-transactions?${params.toString()}`;
 
       const res = await this.hmrcApiClient.fetch(url, {
         accessToken,
         fraudContext,
         headers: { Accept: 'application/vnd.hmrc.4.0+json' },
       });
-      if (!res.ok)
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        this.logger.warn(
+          `Portal liabilities HMRC ${res.status} for NINO ${client.nino}: ${body.slice(0, 400)}`,
+        );
         return {
           message: 'Could not load liabilities from HMRC',
           balanceDetails: null,
@@ -404,6 +419,7 @@ export class PortalService {
           paymentDeadlines: { january: null, july: null },
           paymentDetails: null,
         };
+      }
 
       const data = (await res.json()) as BalanceAndTransactionsResponse;
       const docs = (data.documentDetails ?? []).filter((doc) => this.isLiabilityDocument(doc));
