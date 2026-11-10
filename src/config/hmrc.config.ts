@@ -21,6 +21,9 @@ export default registerAs('hmrc', () => ({
   vendorVersion: process.env.HMRC_VENDOR_VERSION ?? 'mtd-api=1.0.0&mtd-app=1.0.0',
   vendorPublicIp: process.env.HMRC_VENDOR_PUBLIC_IP,
   vendorLicenseIds: process.env.HMRC_VENDOR_LICENSE_IDS,
-  /** Local dev fallback for Gov-Client-Public-Port when the browser cannot detect it */
+  /**
+   * Local/dev only fallback for Gov-Client-Public-Port when nginx is not in front.
+   * Ignored in production — production must use X-Client-Source-Port / socket port.
+   */
   devClientPublicPort: process.env.HMRC_DEV_CLIENT_PUBLIC_PORT,
 }));

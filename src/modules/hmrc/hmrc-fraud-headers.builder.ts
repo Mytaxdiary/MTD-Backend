@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type {
   FraudPreventionClientPayload,
@@ -56,10 +56,23 @@ function resolvePublicClientIp(ctx: HmrcFraudRequestContext): string | undefined
   return undefined;
 }
 
-function resolveClientPort(ctx: HmrcFraudRequestContext, devFallback?: string): string | undefined {
-  const candidates = [ctx.clientPublicPort, ctx.client?.publicPort, devFallback].filter(
-    Boolean,
-  ) as string[];
+/**
+ * Prefer the server-captured port (nginx / socket).
+ * Configured browser/env ports are only allowed outside production so local
+ * setups without nginx can still send a valid header for sandbox testing.
+ */
+function resolveClientPort(
+  ctx: HmrcFraudRequestContext,
+  options?: { allowConfiguredFallback?: boolean; devFallback?: string },
+): string | undefined {
+  const candidates: string[] = [];
+  if (ctx.clientPublicPort) candidates.push(ctx.clientPublicPort);
+
+  if (options?.allowConfiguredFallback) {
+    if (ctx.client?.publicPort) candidates.push(ctx.client.publicPort);
+    if (options.devFallback) candidates.push(options.devFallback);
+  }
+
   for (const port of candidates) {
     if (BANNED_EXAMPLE_PORTS.has(port)) continue;
     if (isValidPublicPort(port)) return port;
@@ -69,6 +82,8 @@ function resolveClientPort(ctx: HmrcFraudRequestContext, devFallback?: string): 
 
 @Injectable()
 export class HmrcFraudHeadersBuilder {
+  private readonly logger = new Logger(HmrcFraudHeadersBuilder.name);
+
   constructor(private readonly configService: ConfigService) {}
 
   /** Builds Gov-* HTTP headers for WEB_APP_VIA_SERVER. */
@@ -112,13 +127,24 @@ export class HmrcFraudHeadersBuilder {
           client.publicIpTimestamp,
         );
 
-        const clientPort = resolveClientPort(
-          ctx,
-          this.configService.get<string>('hmrc.devClientPublicPort'),
-        );
+        const isProd = this.configService.get<string>('app.env') === 'production';
+        const clientPort = resolveClientPort(ctx, {
+          allowConfiguredFallback: !isProd,
+          devFallback: this.configService.get<string>('hmrc.devClientPublicPort'),
+        });
         if (clientPort) {
           headers['Gov-Client-Public-Port'] = clientPort;
         }
+
+        // Temporary verify log for HMRC port variation — remove after HMRC re-approval.
+        const portSource = ctx.clientPublicPort
+          ? 'server'
+          : clientPort
+            ? 'configured-fallback'
+            : 'omitted';
+        this.logger.log(
+          `HMRC Gov-Client-Public-Port=${clientPort ?? 'omitted'} source=${portSource}`,
+        );
 
         if (vendorPublicIp) {
           headers['Gov-Vendor-Forwarded'] = `by=${pct(vendorPublicIp)}&for=${pct(clientIp)}`;

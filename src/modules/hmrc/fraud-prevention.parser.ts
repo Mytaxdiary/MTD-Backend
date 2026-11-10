@@ -3,9 +3,11 @@ import type {
   FraudPreventionClientPayload,
   HmrcFraudRequestContext,
 } from './fraud-prevention.types';
-import { isPublicIpv4, normalizeIp } from './fraud-prevention.ip.util';
+import { isPublicIpv4, isValidPublicPort, normalizeIp } from './fraud-prevention.ip.util';
 
 const FRAUD_HEADER = 'x-hmrc-fraud-context';
+/** Set by nginx: proxy_set_header X-Client-Source-Port $remote_port; */
+const CLIENT_SOURCE_PORT_HEADER = 'x-client-source-port';
 
 function decodeBase64Json(raw: string): FraudPreventionClientPayload | null {
   try {
@@ -52,6 +54,26 @@ export function resolveClientIp(
   return undefined;
 }
 
+/**
+ * Real client TCP source port for Gov-Client-Public-Port.
+ * Prefer nginx-forwarded $remote_port; fall back to the inbound socket when
+ * the client hits Nest directly (local/dev without a reverse proxy).
+ */
+export function resolveClientSourcePort(req: Request): string | undefined {
+  const headerRaw = req.headers[CLIENT_SOURCE_PORT_HEADER];
+  const headerPort = Array.isArray(headerRaw) ? headerRaw[0] : headerRaw;
+  if (typeof headerPort === 'string' && isValidPublicPort(headerPort.trim())) {
+    return headerPort.trim();
+  }
+
+  const socketPort = req.socket?.remotePort;
+  if (typeof socketPort === 'number' && isValidPublicPort(String(socketPort))) {
+    return String(socketPort);
+  }
+
+  return undefined;
+}
+
 export function buildHmrcFraudRequestContext(
   req: Request,
   userEmail: string,
@@ -63,7 +85,8 @@ export function buildHmrcFraudRequestContext(
     client,
     userEmail,
     clientPublicIp: resolveClientIp(req, client),
-    clientPublicPort: client?.publicPort,
+    // Server-captured port only — do not trust browser/env publicPort here.
+    clientPublicPort: resolveClientSourcePort(req),
     loginAt,
     mfaAuthenticated: mfaAuthenticated ?? false,
   };

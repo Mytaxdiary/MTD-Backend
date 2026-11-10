@@ -25,6 +25,7 @@ describe('HmrcFraudHeadersBuilder', () => {
   const config = {
     get: jest.fn((key: string) => {
       const map: Record<string, string> = {
+        'app.env': 'development',
         'hmrc.vendorProductName': 'My Tax Diary',
         'hmrc.vendorVersion': 'mtd-api=1.0.0&mtd-app=1.0.0',
         'hmrc.vendorPublicIp': '198.51.100.1',
@@ -48,9 +49,65 @@ describe('HmrcFraudHeadersBuilder', () => {
     expect(headers['Gov-Vendor-License-IDs']).toBeUndefined();
   });
 
+  it('prefers server-captured clientPublicPort over browser publicPort', () => {
+    const headers = builder.build(
+      ctx({
+        clientPublicPort: '51234',
+        client: {
+          deviceId: 'd',
+          userAgent: 'ua',
+          timezone: 'UTC+00:00',
+          screens: [{ width: 1000, height: 700, scalingFactor: 1, colourDepth: 24 }],
+          windowWidth: 800,
+          windowHeight: 600,
+          publicIp: '203.0.113.10',
+          publicPort: '49821',
+        },
+      }),
+    );
+    expect(headers['Gov-Client-Public-Port']).toBe('51234');
+  });
+
+  it('in production ignores configured browser/env ports and uses server port only', () => {
+    const prodConfig = {
+      get: jest.fn((key: string) => {
+        const map: Record<string, string> = {
+          'app.env': 'production',
+          'hmrc.vendorProductName': 'My Tax Diary',
+          'hmrc.vendorVersion': 'mtd-api=1.0.0&mtd-app=1.0.0',
+          'hmrc.vendorPublicIp': '198.51.100.1',
+          'hmrc.devClientPublicPort': '49821',
+        };
+        return map[key];
+      }),
+    } as unknown as ConfigService;
+    const prodBuilder = new HmrcFraudHeadersBuilder(prodConfig);
+
+    const withoutServerPort = prodBuilder.build(
+      ctx({
+        clientPublicPort: undefined,
+        client: {
+          deviceId: 'd',
+          userAgent: 'ua',
+          timezone: 'UTC+00:00',
+          screens: [{ width: 1000, height: 700, scalingFactor: 1, colourDepth: 24 }],
+          windowWidth: 800,
+          windowHeight: 600,
+          publicIp: '203.0.113.10',
+          publicPort: '49821',
+        },
+      }),
+    );
+    expect(withoutServerPort['Gov-Client-Public-Port']).toBeUndefined();
+
+    const withServerPort = prodBuilder.build(ctx({ clientPublicPort: '40112' }));
+    expect(withServerPort['Gov-Client-Public-Port']).toBe('40112');
+  });
+
   it('clamps window size to screen and never sends example port 12345', () => {
     const headers = builder.build(
       ctx({
+        clientPublicPort: undefined,
         client: {
           deviceId: 'd',
           userAgent: 'ua',
