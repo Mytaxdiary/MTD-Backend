@@ -3,7 +3,7 @@ import { registerAs } from '@nestjs/config';
 export default registerAs('emailOAuth', () => ({
   /**
    * 64-char hex AES-256-GCM key for mailbox tokens.
-   * Falls back to HMRC_ENCRYPTION_KEY when unset.
+   * Required via env validation. Fallback kept only if an older process still omits EMAIL_ENCRYPTION_KEY.
    */
   encryptionKey: process.env.EMAIL_ENCRYPTION_KEY || process.env.HMRC_ENCRYPTION_KEY,
 

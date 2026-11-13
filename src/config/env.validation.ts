@@ -43,11 +43,11 @@ export const envValidationSchema = Joi.object({
   HMRC_CLIENT_SECRET: Joi.string().optional(),
   HMRC_REDIRECT_URI: Joi.string().uri().optional(),
   HMRC_SCOPE: Joi.string().optional(),
-  // 64-char hex = 32-byte AES key. Required in production, optional in sandbox/dev.
-  HMRC_ENCRYPTION_KEY: Joi.string().length(64).optional(),
+  // 64-char hex = 32-byte AES key (HMRC tokens + TOTP)
+  HMRC_ENCRYPTION_KEY: Joi.string().length(64).required(),
 
-  // Agent mailbox OAuth (optional — falls back to system SMTP when unset / not connected)
-  EMAIL_ENCRYPTION_KEY: Joi.string().length(64).optional(),
+  // Agent mailbox OAuth tokens (do not rely on HMRC key fallback)
+  EMAIL_ENCRYPTION_KEY: Joi.string().length(64).required(),
   GOOGLE_CLIENT_ID: Joi.string().optional(),
   GOOGLE_CLIENT_SECRET: Joi.string().optional(),
   GOOGLE_REDIRECT_URI: Joi.string().uri().optional(),
@@ -61,6 +61,8 @@ export const envValidationSchema = Joi.object({
   // Auth — JWT (required: auth module is now active)
   JWT_SECRET: Joi.string().min(16).required(),
   JWT_EXPIRES_IN: Joi.string().default('15m'),
+  // Client portal tokens — separate from agent JWT_SECRET
+  PORTAL_JWT_SECRET: Joi.string().min(16).required(),
   REFRESH_TOKEN_SECRET: Joi.string().min(16).required(),
   REFRESH_TOKEN_EXPIRES_IN: Joi.string().default('7d'),
 

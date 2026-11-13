@@ -6,6 +6,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Request } from 'express';
 import { ClientUser } from '../entities/client-user.entity';
+import { requirePortalJwtSecret } from '../../../config/require-jwt-secret';
 
 export const PORTAL_JWT_STRATEGY = 'portal-jwt';
 export const PORTAL_COOKIE = 'mtd_cp_at';
@@ -41,7 +42,7 @@ export class PortalJwtStrategy extends PassportStrategy(Strategy, PORTAL_JWT_STR
         ExtractJwt.fromAuthHeaderAsBearerToken(),
       ]),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('auth.jwtSecret') ?? 'dev-fallback-secret',
+      secretOrKey: requirePortalJwtSecret(configService),
       passReqToCallback: false,
     });
   }

@@ -17,6 +17,7 @@ import { TenantsModule } from '../tenants/tenants.module';
 import { MailModule } from '../mail/mail.module';
 import { TeamModule } from '../team/team.module';
 import { BillingModule } from '../billing/billing.module';
+import { requireJwtSecret } from '../../config/require-jwt-secret';
 
 @Module({
   imports: [
@@ -26,7 +27,7 @@ import { BillingModule } from '../billing/billing.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('auth.jwtSecret') ?? 'dev-fallback-secret',
+        secret: requireJwtSecret(config),
         signOptions: {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           expiresIn: (config.get<string>('auth.jwtExpiresIn') ?? '15m') as any,

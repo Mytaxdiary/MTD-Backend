@@ -82,6 +82,7 @@ const mockConfigService = {
     const cfg: Record<string, string> = {
       'app.frontendUrl': 'http://localhost:3000',
       'auth.jwtSecret': EMAIL_HASH_SECRET,
+      'auth.portalJwtSecret': 'portal-test-secret-min-16',
       EMAIL_HASH_SECRET,
     };
     return cfg[key];

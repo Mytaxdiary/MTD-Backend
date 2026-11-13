@@ -1,10 +1,14 @@
 import { Body, Controller, Post, Res } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { PortalService } from './portal.service';
 import { PortalSetupDto } from './dto/portal-setup.dto';
 import { PortalLoginDto } from './dto/portal-login.dto';
 import { PortalPreviewExchangeDto } from './dto/portal-preview-exchange.dto';
+
+/** Same named throttler as agent auth — 10 req / 60s (vs global 100/min). */
+const PORTAL_AUTH_THROTTLE = { auth: { limit: 10, ttl: 60_000 } };
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 const COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours (seconds)
@@ -28,6 +32,7 @@ export class PortalAuthController {
   constructor(private readonly portalService: PortalService) {}
 
   @Post('setup')
+  @Throttle(PORTAL_AUTH_THROTTLE)
   @ApiOperation({ summary: 'Client sets password via one-time setup token' })
   async setup(@Body() dto: PortalSetupDto, @Res({ passthrough: true }) res: Response) {
     const { accessToken, name } = await this.portalService.setup(dto);
@@ -36,6 +41,7 @@ export class PortalAuthController {
   }
 
   @Post('login')
+  @Throttle(PORTAL_AUTH_THROTTLE)
   @ApiOperation({ summary: 'Client portal login' })
   async login(@Body() dto: PortalLoginDto, @Res({ passthrough: true }) res: Response) {
     const { accessToken, name } = await this.portalService.login(dto);
@@ -55,6 +61,7 @@ export class PortalAuthController {
    * Called by /portal/preview page immediately on load.
    */
   @Post('preview-session')
+  @Throttle(PORTAL_AUTH_THROTTLE)
   @ApiOperation({ summary: 'Exchange preview token for a portal session (agent use only)' })
   previewSession(@Body() dto: PortalPreviewExchangeDto, @Res({ passthrough: true }) res: Response) {
     const { accessToken } = this.portalService.exchangePreviewToken(dto.token);

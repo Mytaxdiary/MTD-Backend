@@ -15,6 +15,7 @@ import {
 } from '../../users/permissions';
 import { evaluateBillingAccess } from '../../billing/billing-access.util';
 import { isBillingExemptPath } from '../../billing/billing-access-paths.util';
+import { requireJwtSecret } from '../../../config/require-jwt-secret';
 
 export interface JwtPayload {
   /** Subject — userId (UUID) */
@@ -60,7 +61,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         ExtractJwt.fromAuthHeaderAsBearerToken(),
       ]),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('auth.jwtSecret') ?? 'dev-fallback-secret',
+      secretOrKey: requireJwtSecret(configService),
       passReqToCallback: true,
     });
   }

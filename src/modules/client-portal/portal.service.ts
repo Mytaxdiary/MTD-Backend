@@ -961,13 +961,14 @@ export class PortalService {
    * Secret used for the email HMAC lookup hash.
    * Reads EMAIL_HASH_SECRET from config; falls back to the JWT secret so
    * existing deployments work without any new env variables.
+   * Never falls back to a hardcoded secret.
    */
   private emailHashSecret(): string {
-    return (
-      this.configService.get<string>('EMAIL_HASH_SECRET') ??
-      this.configService.get<string>('auth.jwtSecret') ??
-      'dev-fallback'
-    );
+    const dedicated = this.configService.get<string>('EMAIL_HASH_SECRET')?.trim();
+    if (dedicated) return dedicated;
+    const jwtSecret = this.configService.get<string>('auth.jwtSecret')?.trim();
+    if (jwtSecret) return jwtSecret;
+    throw new Error('EMAIL_HASH_SECRET or JWT_SECRET is required for portal email hashing.');
   }
 }
 

@@ -16,6 +16,7 @@ import { PortalJwtGuard } from './guards/portal-jwt.guard';
 import { HmrcModule } from '../hmrc/hmrc.module';
 import { MailModule } from '../mail/mail.module';
 import { AppNotificationsModule } from '../app-notifications/app-notifications.module';
+import { requirePortalJwtSecret } from '../../config/require-jwt-secret';
 
 @Module({
   imports: [
@@ -25,7 +26,7 @@ import { AppNotificationsModule } from '../app-notifications/app-notifications.m
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('auth.jwtSecret') ?? 'dev-fallback-secret',
+        secret: requirePortalJwtSecret(config),
         signOptions: { expiresIn: '24h' },
       }),
     }),
