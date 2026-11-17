@@ -22,6 +22,8 @@ import { PortalJwtGuard } from './guards/portal-jwt.guard';
 import { PortalService } from './portal.service';
 import type { PortalRequestUser } from './strategies/portal-jwt.strategy';
 import { ClientPortalReplyDto } from './dto/client-portal-reply.dto';
+import { PortalEnableMfaDto } from './dto/portal-enable-mfa.dto';
+import { PortalDisableMfaDto } from './dto/portal-disable-mfa.dto';
 import { buildHmrcFraudRequestContext } from '../hmrc/fraud-prevention.parser';
 import type { HmrcFraudRequestContext } from '../hmrc/fraud-prevention.types';
 
@@ -47,6 +49,32 @@ export class PortalController {
     const { clientId, tenantId, isPreview } = this.user(req);
     const data = await this.portalService.getMe(clientId, tenantId);
     return { ...data, isPreview: isPreview ?? false };
+  }
+
+  @Get('mfa/setup')
+  @ApiOperation({ summary: 'Generate TOTP secret + QR URL for portal MFA setup' })
+  async mfaSetup(@Request() req: ExpressRequest) {
+    const u = this.user(req);
+    if (u.isPreview) throw new BadRequestException('Preview mode is read-only');
+    return this.portalService.setupMfa(u.clientUserId);
+  }
+
+  @Post('mfa/enable')
+  @ApiOperation({ summary: 'Confirm TOTP code and enable portal MFA' })
+  async mfaEnable(@Request() req: ExpressRequest, @Body() dto: PortalEnableMfaDto) {
+    const u = this.user(req);
+    if (u.isPreview) throw new BadRequestException('Preview mode is read-only');
+    await this.portalService.enableMfa(u.clientUserId, dto.setupToken, dto.code);
+    return { message: 'Two-step verification enabled.' };
+  }
+
+  @Post('mfa/disable')
+  @ApiOperation({ summary: 'Disable portal MFA after password + TOTP check' })
+  async mfaDisable(@Request() req: ExpressRequest, @Body() dto: PortalDisableMfaDto) {
+    const u = this.user(req);
+    if (u.isPreview) throw new BadRequestException('Preview mode is read-only');
+    await this.portalService.disableMfa(u.clientUserId, dto.password, dto.code);
+    return { message: 'Two-step verification disabled.' };
   }
 
   @Get('obligations')

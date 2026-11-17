@@ -12,6 +12,7 @@ import { Repository, IsNull, In } from 'typeorm';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { authenticator } from 'otplib';
 import { ClientUser } from './entities/client-user.entity';
 import { PortalMessage } from './entities/portal-message.entity';
 import { PortalFile } from './entities/portal-file.entity';
@@ -21,6 +22,7 @@ import { HmrcService } from '../hmrc/hmrc.service';
 import { HmrcApiClient } from '../hmrc/hmrc-api.client';
 import { MailService } from '../mail/mail.service';
 import { hashPassword, comparePassword } from '../../common/helpers/crypto.helper';
+import { decrypt, encrypt, isEncrypted } from '../hmrc/crypto.util';
 import type { PortalJwtPayload } from './strategies/portal-jwt.strategy';
 import type { PortalSetupDto } from './dto/portal-setup.dto';
 import type { PortalLoginDto } from './dto/portal-login.dto';
@@ -186,7 +188,12 @@ export class PortalService {
   }
 
   /** Client logs in with email + password. */
-  async login(dto: PortalLoginDto): Promise<{ accessToken: string; name: string }> {
+  async login(dto: PortalLoginDto): Promise<{
+    accessToken?: string;
+    name: string;
+    requiresMfa?: boolean;
+    mfaToken?: string;
+  }> {
     // Hash the incoming email to look up the single matching row directly —
     // no full-table scan needed even though the email column is encrypted.
     const digest = hashEmail(dto.email, this.emailHashSecret());
@@ -201,6 +208,64 @@ export class PortalService {
     const valid = await comparePassword(dto.password, cu.passwordHash);
     if (!valid) throw new UnauthorizedException('Invalid email or password');
 
+    const client = await this.clientRepo.findOne({ where: { id: cu.clientId } });
+    const name = client?.name ?? '';
+
+    if (cu.mfaEnabled && cu.totpSecret) {
+      const mfaToken = this.jwtService.sign(
+        {
+          sub: cu.id,
+          clientId: cu.clientId,
+          tenantId: cu.tenantId,
+          type: 'portal_mfa_challenge',
+        },
+        { expiresIn: '5m' },
+      );
+      return { requiresMfa: true, mfaToken, name };
+    }
+
+    cu.lastLoginAt = new Date();
+    await this.clientUserRepo.save(cu);
+
+    return {
+      accessToken: this.signToken(cu),
+      name,
+    };
+  }
+
+  async verifyMfaChallenge(
+    mfaToken: string,
+    code: string,
+  ): Promise<{ accessToken: string; name: string }> {
+    let payload: {
+      sub: string;
+      clientId: string;
+      tenantId: string;
+      type: string;
+    };
+    try {
+      payload = this.jwtService.verify(mfaToken) as typeof payload;
+    } catch {
+      throw new UnauthorizedException('MFA session expired. Please sign in again.');
+    }
+    if (payload.type !== 'portal_mfa_challenge') {
+      throw new UnauthorizedException('Invalid MFA token.');
+    }
+
+    const cu = await this.clientUserRepo.findOne({
+      where: { id: payload.sub, isActive: true },
+    });
+    if (!cu || !cu.mfaEnabled || !cu.totpSecret) {
+      throw new UnauthorizedException('Portal account not found or MFA not enabled.');
+    }
+    if (cu.clientId !== payload.clientId || cu.tenantId !== payload.tenantId) {
+      throw new UnauthorizedException('Invalid MFA token.');
+    }
+
+    const plainSecret = this.decryptTotp(cu.totpSecret);
+    const isValid = authenticator.verify({ token: code, secret: plainSecret });
+    if (!isValid) throw new UnauthorizedException('Invalid code. Please try again.');
+
     cu.lastLoginAt = new Date();
     await this.clientUserRepo.save(cu);
 
@@ -211,12 +276,66 @@ export class PortalService {
     };
   }
 
+  async setupMfa(
+    clientUserId: string,
+  ): Promise<{ secret: string; otpauthUrl: string; setupToken: string }> {
+    const cu = await this.requireActiveClientUser(clientUserId);
+    const secret = authenticator.generateSecret();
+    const otpauthUrl = authenticator.keyuri(cu.email, 'My Tax Diary Portal', secret);
+    const storedSecret = encrypt(secret, this.encryptionKey());
+    const setupToken = this.jwtService.sign(
+      { sub: cu.id, totpSecret: storedSecret, type: 'portal_mfa_setup' },
+      { expiresIn: '10m' },
+    );
+    return { secret, otpauthUrl, setupToken };
+  }
+
+  async enableMfa(clientUserId: string, setupToken: string, code: string): Promise<void> {
+    const cu = await this.requireActiveClientUser(clientUserId);
+    let payload: { sub: string; totpSecret: string; type: string };
+    try {
+      payload = this.jwtService.verify(setupToken) as typeof payload;
+    } catch {
+      throw new BadRequestException('Setup session expired. Please start MFA setup again.');
+    }
+    if (payload.type !== 'portal_mfa_setup' || payload.sub !== cu.id) {
+      throw new BadRequestException('Invalid setup token.');
+    }
+
+    const plainSecret = this.decryptTotp(payload.totpSecret);
+    const isValid = authenticator.verify({ token: code, secret: plainSecret });
+    if (!isValid) throw new BadRequestException('Invalid code. Please try again.');
+
+    cu.totpSecret = payload.totpSecret;
+    cu.mfaEnabled = true;
+    await this.clientUserRepo.save(cu);
+  }
+
+  async disableMfa(clientUserId: string, password: string, code: string): Promise<void> {
+    const cu = await this.requireActiveClientUser(clientUserId);
+    if (!cu.passwordHash) throw new BadRequestException('Account password is not set.');
+    const passwordMatch = await comparePassword(password, cu.passwordHash);
+    if (!passwordMatch) throw new BadRequestException('Incorrect password.');
+    if (!cu.mfaEnabled || !cu.totpSecret) {
+      throw new BadRequestException('MFA is not enabled on this account.');
+    }
+
+    const plainSecret = this.decryptTotp(cu.totpSecret);
+    const isValid = authenticator.verify({ token: code, secret: plainSecret });
+    if (!isValid) throw new BadRequestException('Invalid code. Please try again.');
+
+    cu.mfaEnabled = false;
+    cu.totpSecret = null;
+    await this.clientUserRepo.save(cu);
+  }
+
   // ── Portal data ────────────────────────────────────────────────────────────
 
   async getMe(clientId: string, tenantId: string) {
     const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
     if (!client) throw new NotFoundException('Client not found');
     const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
+    const cu = await this.clientUserRepo.findOne({ where: { clientId, tenantId } });
     return {
       name: client.name,
       nino: client.portalOnly ? undefined : client.nino,
@@ -227,6 +346,7 @@ export class PortalService {
       utr: client.utr,
       firmName: tenant?.firmName ?? '',
       firmEmail: tenant?.contactEmail ?? '',
+      mfaEnabled: !!cu?.mfaEnabled,
     };
   }
 
@@ -877,6 +997,27 @@ export class PortalService {
       role: 'client',
     };
     return this.jwtService.sign(payload, { expiresIn: ACCESS_TOKEN_EXPIRY });
+  }
+
+  private async requireActiveClientUser(clientUserId: string): Promise<ClientUser> {
+    const cu = await this.clientUserRepo.findOne({
+      where: { id: clientUserId, isActive: true },
+    });
+    if (!cu) throw new UnauthorizedException('Portal account not found or inactive');
+    return cu;
+  }
+
+  private encryptionKey(): string {
+    const key = this.configService.get<string>('hmrc.encryptionKey')?.trim();
+    if (!key) {
+      throw new BadRequestException('Encryption key is not configured.');
+    }
+    return key;
+  }
+
+  private decryptTotp(stored: string): string {
+    const key = this.encryptionKey();
+    return isEncrypted(stored) ? decrypt(stored, key) : stored;
   }
 
   cookieName(): string {

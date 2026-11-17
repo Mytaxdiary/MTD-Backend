@@ -3,6 +3,7 @@ import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/c
 import { HmrcFraudHeadersBuilder } from './hmrc-fraud-headers.builder';
 import type { HmrcFraudRequestContext } from './fraud-prevention.types';
 import { retryWithBackoff, type RetryOptions } from './hmrc-retry.util';
+import { ErrorLogsService } from '../error-logs/error-logs.service';
 
 /**
  * Verify at module load time that the Node.js runtime enforces TLS 1.2 or
@@ -30,6 +31,15 @@ if (TLS_ORDER.indexOf(currentMin as (typeof TLS_ORDER)[number]) < TLS_ORDER.inde
  */
 const HMRC_ACCEPT_DEFAULT = 'application/vnd.hmrc.1.0+json';
 
+/** Optional labels so admin error rows show firm/client without per-call logging. */
+export type HmrcErrorLogContext = {
+  clientId?: string | null;
+  clientLabel?: string | null;
+  tenantId?: string | null;
+  tenantLabel?: string | null;
+  userId?: string | null;
+};
+
 export interface HmrcFetchOptions extends Omit<RequestInit, 'headers'> {
   headers?: Record<string, string>;
   accessToken?: string;
@@ -41,13 +51,18 @@ export interface HmrcFetchOptions extends Omit<RequestInit, 'headers'> {
   skipFraudHeaders?: boolean;
   /** Override retry behaviour — pass `{ maxRetries: 0 }` to disable. */
   retry?: RetryOptions;
+  /** Optional firm/client context stored on failed HMRC calls. */
+  errorContext?: HmrcErrorLogContext;
 }
 
 @Injectable()
 export class HmrcApiClient implements OnModuleInit {
   private readonly logger = new Logger(HmrcApiClient.name);
 
-  constructor(private readonly fraudHeadersBuilder: HmrcFraudHeadersBuilder) {}
+  constructor(
+    private readonly fraudHeadersBuilder: HmrcFraudHeadersBuilder,
+    private readonly errorLogsService: ErrorLogsService,
+  ) {}
 
   onModuleInit() {
     this.logger.log(
@@ -62,6 +77,7 @@ export class HmrcApiClient implements OnModuleInit {
       skipFraudHeaders = false,
       headers: extraHeaders,
       retry,
+      errorContext,
       ...init
     } = options;
 
@@ -79,7 +95,29 @@ export class HmrcApiClient implements OnModuleInit {
       headers.Authorization = `Bearer ${accessToken}`;
     }
 
-    return retryWithBackoff(() => fetch(url, { ...init, headers }), retry);
+    const method = (init.method ?? 'GET').toString().toUpperCase();
+
+    try {
+      const response = await retryWithBackoff(() => fetch(url, { ...init, headers }), retry);
+      if (!response.ok) {
+        void this.logHmrcFailure(url, method, response.status, response.clone(), errorContext);
+      }
+      return response;
+    } catch (err) {
+      void this.errorLogsService.record({
+        source: 'hmrc',
+        endpoint: this.safeEndpoint(url),
+        httpMethod: method,
+        statusCode: null,
+        message: err instanceof Error ? err.message : 'HMRC request failed',
+        clientId: errorContext?.clientId,
+        clientLabel: errorContext?.clientLabel,
+        tenantId: errorContext?.tenantId,
+        tenantLabel: errorContext?.tenantLabel,
+        userId: errorContext?.userId,
+      });
+      throw err;
+    }
   }
 
   /**
@@ -109,6 +147,44 @@ export class HmrcApiClient implements OnModuleInit {
       throw new BadRequestException(
         'Signed-in user identity is required for HMRC fraud prevention headers.',
       );
+    }
+  }
+
+  private async logHmrcFailure(
+    url: string,
+    method: string,
+    statusCode: number,
+    body: Response,
+    errorContext?: HmrcErrorLogContext,
+  ): Promise<void> {
+    let detail = `HMRC responded ${statusCode}`;
+    try {
+      const text = (await body.text()).slice(0, 400);
+      if (text) detail = `${detail}: ${text}`;
+    } catch {
+      // ignore body read failures
+    }
+
+    await this.errorLogsService.record({
+      source: 'hmrc',
+      endpoint: this.safeEndpoint(url),
+      httpMethod: method,
+      statusCode,
+      message: detail,
+      clientId: errorContext?.clientId,
+      clientLabel: errorContext?.clientLabel,
+      tenantId: errorContext?.tenantId,
+      tenantLabel: errorContext?.tenantLabel,
+      userId: errorContext?.userId,
+    });
+  }
+
+  private safeEndpoint(url: string): string {
+    try {
+      const parsed = new URL(url);
+      return `${parsed.origin}${parsed.pathname}`.slice(0, 500);
+    } catch {
+      return url.split('?')[0]?.slice(0, 500) || url.slice(0, 500);
     }
   }
 }

@@ -12,12 +12,14 @@ import { RefreshToken } from '../auth/entities/refresh-token.entity';
 import { AdminAuditLog } from './entities/admin-audit-log.entity';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
+import { ErrorLogsModule } from '../error-logs/error-logs.module';
 
 @Module({
   imports: [
     AuthModule,
     UsersModule,
     BillingModule,
+    ErrorLogsModule,
     TypeOrmModule.forFeature([
       Tenant,
       User,

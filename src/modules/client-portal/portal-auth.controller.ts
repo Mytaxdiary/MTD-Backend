@@ -6,6 +6,7 @@ import { PortalService } from './portal.service';
 import { PortalSetupDto } from './dto/portal-setup.dto';
 import { PortalLoginDto } from './dto/portal-login.dto';
 import { PortalPreviewExchangeDto } from './dto/portal-preview-exchange.dto';
+import { PortalVerifyMfaDto } from './dto/portal-verify-mfa.dto';
 
 /** Same named throttler as agent auth — 10 req / 60s (vs global 100/min). */
 const PORTAL_AUTH_THROTTLE = { auth: { limit: 10, ttl: 60_000 } };
@@ -44,7 +45,28 @@ export class PortalAuthController {
   @Throttle(PORTAL_AUTH_THROTTLE)
   @ApiOperation({ summary: 'Client portal login' })
   async login(@Body() dto: PortalLoginDto, @Res({ passthrough: true }) res: Response) {
-    const { accessToken, name } = await this.portalService.login(dto);
+    const result = await this.portalService.login(dto);
+    if (result.requiresMfa) {
+      return {
+        name: result.name,
+        requiresMfa: true,
+        mfaToken: result.mfaToken,
+      };
+    }
+    if (result.accessToken) {
+      setPortalCookie(res, result.accessToken, this.portalService.cookieName());
+    }
+    return { name: result.name };
+  }
+
+  @Post('mfa/verify')
+  @Throttle(PORTAL_AUTH_THROTTLE)
+  @ApiOperation({ summary: 'Complete portal MFA login' })
+  async verifyMfa(@Body() dto: PortalVerifyMfaDto, @Res({ passthrough: true }) res: Response) {
+    const { accessToken, name } = await this.portalService.verifyMfaChallenge(
+      dto.mfaToken,
+      dto.code,
+    );
     setPortalCookie(res, accessToken, this.portalService.cookieName());
     return { name };
   }

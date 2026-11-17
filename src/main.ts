@@ -6,7 +6,6 @@ import helmet from 'helmet';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const cookieParser = require('cookie-parser');
 import { AppModule } from './app.module';
-import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import {
   API_PREFIX,
@@ -57,8 +56,7 @@ async function bootstrap() {
     }),
   );
 
-  // Global exception filter
-  app.useGlobalFilters(new AllExceptionsFilter());
+  // Global exception filter is registered via APP_FILTER in AppModule (needs DI).
 
   // Global response interceptor
   app.useGlobalInterceptors(new ResponseInterceptor());

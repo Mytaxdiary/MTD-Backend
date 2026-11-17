@@ -46,6 +46,13 @@ export class ClientUser extends BaseEntity {
   @Column({ name: 'is_active', type: 'boolean', default: false })
   isActive: boolean;
 
+  @Column({ name: 'mfa_enabled', type: 'boolean', default: false })
+  mfaEnabled: boolean;
+
+  /** AES-256-GCM encrypted TOTP secret (same scheme as agent users). */
+  @Column({ name: 'totp_secret', type: 'varchar', length: 500, nullable: true })
+  totpSecret?: string | null;
+
   @Column({ name: 'last_login_at', type: 'datetime', nullable: true })
   lastLoginAt?: Date;
 }

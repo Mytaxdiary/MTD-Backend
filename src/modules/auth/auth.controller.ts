@@ -112,6 +112,7 @@ export class AuthController {
 
   @Get('mfa/setup')
   @UseGuards(JwtAuthGuard)
+  @AuthAudience('any')
   @ApiBearerAuth('access-token')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Generate TOTP secret + QR URL for MFA setup' })
@@ -121,6 +122,7 @@ export class AuthController {
 
   @Post('mfa/enable')
   @UseGuards(JwtAuthGuard)
+  @AuthAudience('any')
   @ApiBearerAuth('access-token')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Confirm TOTP code and enable MFA for this account' })
@@ -131,6 +133,7 @@ export class AuthController {
 
   @Post('mfa/disable')
   @UseGuards(JwtAuthGuard)
+  @AuthAudience('any')
   @ApiBearerAuth('access-token')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify password + TOTP and disable MFA' })

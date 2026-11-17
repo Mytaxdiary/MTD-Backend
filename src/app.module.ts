@@ -3,9 +3,11 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { ErrorLogsModule } from './modules/error-logs/error-logs.module';
 import appConfig from './config/app.config';
 import databaseConfig, { typeOrmConfig } from './config/database.config';
 import authConfig from './config/auth.config';
@@ -83,6 +85,7 @@ import stripeConfig from './config/stripe.config';
     // Cron jobs — required before any module that uses @Cron()
     ScheduleModule.forRoot(),
 
+    ErrorLogsModule,
     HealthModule,
     AuthModule,
     TenantsModule,
@@ -107,6 +110,8 @@ import stripeConfig from './config/stripe.config';
     AppService,
     // Apply rate limiting globally to all routes
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Persist 5xx / unexpected errors via ErrorLogsService
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
 })
 export class AppModule {}

@@ -30,6 +30,8 @@ function makeClientUser(overrides: Partial<ClientUser> = {}): ClientUser {
     emailHash: crypto.createHmac('sha256', EMAIL_HASH_SECRET).update(RAW_EMAIL).digest('hex'),
     passwordHash: 'hashed-password',
     isActive: true,
+    mfaEnabled: false,
+    totpSecret: null,
     lastLoginAt: null,
     portalSetupToken: undefined,
     portalSetupTokenExpiresAt: undefined,
@@ -83,6 +85,7 @@ const mockConfigService = {
       'app.frontendUrl': 'http://localhost:3000',
       'auth.jwtSecret': EMAIL_HASH_SECRET,
       'auth.portalJwtSecret': 'portal-test-secret-min-16',
+      'hmrc.encryptionKey': 'a'.repeat(64),
       EMAIL_HASH_SECRET,
     };
     return cfg[key];

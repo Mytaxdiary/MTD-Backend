@@ -39,6 +39,8 @@ import { UpdateEnquiryDto } from './dto/update-enquiry.dto';
 import { AdminAuditLogsQueryDto } from './dto/admin-audit-logs-query.dto';
 import { ClearTrialDomainDto } from './dto/clear-trial-domain.dto';
 import { SetTrialDaysDto } from './dto/set-trial-days.dto';
+import { ErrorLogsService } from '../error-logs/error-logs.service';
+import { AdminErrorsQueryDto } from '../error-logs/dto/admin-errors-query.dto';
 
 interface AuthRequest extends ExpressRequest {
   user: RequestUser;
@@ -58,6 +60,7 @@ export class AdminController {
     private readonly authService: AuthService,
     private readonly adminService: AdminService,
     private readonly billingService: BillingService,
+    private readonly errorLogsService: ErrorLogsService,
   ) {}
 
   private actorFrom(req: AuthRequest) {
@@ -234,6 +237,32 @@ export class AdminController {
       page: query.page,
       limit: query.limit,
       action: query.action,
+      search: query.search,
+    });
+  }
+
+  @Get('errors')
+  @ApiOperation({
+    summary: 'Paginated system / HMRC / API error log',
+    description:
+      'Failed HMRC calls and server errors for support. Populate via ErrorLogsService.record (wired in a follow-up task).',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'source', required: false, enum: ['hmrc', 'api', 'server'] })
+  @ApiQuery({ name: 'statusCode', required: false, type: Number })
+  @ApiQuery({ name: 'from', required: false, type: String })
+  @ApiQuery({ name: 'to', required: false, type: String })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiOkResponse({ description: 'Error log page' })
+  listErrors(@Query() query: AdminErrorsQueryDto) {
+    return this.errorLogsService.listForAdmin({
+      page: query.page,
+      limit: query.limit,
+      source: query.source,
+      statusCode: query.statusCode,
+      from: query.from,
+      to: query.to,
       search: query.search,
     });
   }
