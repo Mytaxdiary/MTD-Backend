@@ -7,7 +7,9 @@ import {
   NotFoundException,
   ForbiddenException,
   UseGuards,
+  Request,
 } from '@nestjs/common';
+import type { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequireOwner } from '../../common/decorators/require-permission.decorator';
@@ -20,6 +22,7 @@ import {
   ApiForbiddenResponse,
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
+import type { RequestUser } from '../auth/strategies/jwt.strategy';
 
 @ApiTags('Users')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -36,6 +39,7 @@ export class UsersController {
    * notifications, portal data, uploaded files) but keeps the user account and
    * tenant row intact so the user can still log in.
    * Dev / testing only — not available in production.
+   * Only the signed-in owner may clear their own account (prevents cross-firm wipe).
    */
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
@@ -49,15 +53,23 @@ export class UsersController {
   @ApiParam({ name: 'id', description: 'User UUID' })
   @ApiOkResponse({ description: 'Firm data cleared — account still active' })
   @ApiForbiddenResponse({ description: 'Not available in production' })
-  async clearUserData(@Param('id') id: string) {
+  async clearUserData(@Param('id') id: string, @Request() req: ExpressRequest) {
     const isProd = this.configService.get<string>('app.env') === 'production';
     if (isProd) {
       throw new ForbiddenException('This endpoint is not available in production');
     }
 
+    const actor = req.user as RequestUser;
+    if (id !== actor.userId) {
+      throw new ForbiddenException('You can only clear data for your own account');
+    }
+
     const user = await this.usersService.findById(id);
     if (!user) {
       throw new NotFoundException(`User ${id} not found`);
+    }
+    if (user.tenantId && actor.tenantId && user.tenantId !== actor.tenantId) {
+      throw new ForbiddenException('You can only clear data for your own firm');
     }
 
     await this.usersService.clearData(id);

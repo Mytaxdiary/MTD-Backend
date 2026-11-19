@@ -162,6 +162,18 @@ describe('JwtStrategy — session and firm access product rules', () => {
     );
     expect(result.role).toBe('admin');
     expect(result.audience).toBe('admin');
+    expect(result.tenantId).toBe('');
+  });
+
+  it('binds firm tenantId from the DB user, not a mismatched JWT claim', async () => {
+    mockUserRepo.findOne.mockResolvedValue(firmUser({ tenantId: 'tenant-1' }));
+    await expect(
+      strategy.validate(req(), payload({ tenantId: 'other-tenant' })),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+
+    mockUserRepo.findOne.mockResolvedValue(firmUser({ tenantId: 'tenant-1' }));
+    const result = await strategy.validate(req(), payload({ tenantId: 'tenant-1' }));
+    expect(result.tenantId).toBe('tenant-1');
   });
 
   it('rejects inactive users', async () => {

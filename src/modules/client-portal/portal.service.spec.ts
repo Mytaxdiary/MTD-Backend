@@ -47,6 +47,7 @@ function makeClient() {
 
 const mockClientUserRepo = {
   findOne: jest.fn(),
+  find: jest.fn(),
   save: jest.fn().mockResolvedValue(undefined),
   create: jest.fn(),
 };
@@ -135,7 +136,7 @@ describe('PortalService — login()', () => {
 
   it('returns accessToken and client name on valid credentials', async () => {
     const cu = makeClientUser();
-    mockClientUserRepo.findOne.mockResolvedValue(cu);
+    mockClientUserRepo.find.mockResolvedValue([cu]);
     jest.spyOn(cryptoHelper, 'comparePassword').mockResolvedValue(true);
     mockClientRepo.findOne.mockResolvedValue(makeClient());
 
@@ -147,7 +148,7 @@ describe('PortalService — login()', () => {
 
   it('updates lastLoginAt on successful login', async () => {
     const cu = makeClientUser();
-    mockClientUserRepo.findOne.mockResolvedValue(cu);
+    mockClientUserRepo.find.mockResolvedValue([cu]);
     jest.spyOn(cryptoHelper, 'comparePassword').mockResolvedValue(true);
     mockClientRepo.findOne.mockResolvedValue(makeClient());
 
@@ -158,20 +159,20 @@ describe('PortalService — login()', () => {
     expect(savedCu.lastLoginAt).toBeInstanceOf(Date);
   });
 
-  it('returns empty string for name when client record is missing', async () => {
-    mockClientUserRepo.findOne.mockResolvedValue(makeClientUser());
+  it('throws when client record is missing for the portal user tenant', async () => {
+    mockClientUserRepo.find.mockResolvedValue([makeClientUser()]);
     jest.spyOn(cryptoHelper, 'comparePassword').mockResolvedValue(true);
     mockClientRepo.findOne.mockResolvedValue(null);
 
-    const result = await service.login({ email: RAW_EMAIL, password: 'correct' });
-
-    expect(result.name).toBe('');
+    await expect(service.login({ email: RAW_EMAIL, password: 'correct' })).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 
   // ── Email not found ─────────────────────────────────────────────────────────
 
   it('throws UnauthorizedException when email does not match any active user', async () => {
-    mockClientUserRepo.findOne.mockResolvedValue(null);
+    mockClientUserRepo.find.mockResolvedValue([]);
 
     await expect(service.login({ email: 'nobody@example.com', password: 'any' })).rejects.toThrow(
       UnauthorizedException,
@@ -182,7 +183,7 @@ describe('PortalService — login()', () => {
 
   it('throws UnauthorizedException when account is inactive (portal not set up)', async () => {
     // isActive: false means the client never completed portal setup
-    mockClientUserRepo.findOne.mockResolvedValue(null); // findOne filters isActive: true
+    mockClientUserRepo.find.mockResolvedValue([]); // find filters isActive: true
 
     await expect(service.login({ email: RAW_EMAIL, password: 'any' })).rejects.toThrow(
       UnauthorizedException,
@@ -192,7 +193,7 @@ describe('PortalService — login()', () => {
   // ── Wrong password ──────────────────────────────────────────────────────────
 
   it('throws UnauthorizedException on wrong password', async () => {
-    mockClientUserRepo.findOne.mockResolvedValue(makeClientUser());
+    mockClientUserRepo.find.mockResolvedValue([makeClientUser()]);
     jest.spyOn(cryptoHelper, 'comparePassword').mockResolvedValue(false);
 
     await expect(service.login({ email: RAW_EMAIL, password: 'wrong-password' })).rejects.toThrow(
@@ -201,7 +202,7 @@ describe('PortalService — login()', () => {
   });
 
   it('uses the correct error message to prevent email enumeration', async () => {
-    mockClientUserRepo.findOne.mockResolvedValue(null);
+    mockClientUserRepo.find.mockResolvedValue([]);
 
     let error: UnauthorizedException | undefined;
     try {
@@ -218,7 +219,7 @@ describe('PortalService — login()', () => {
 
   it('throws UnauthorizedException when portal setup was not completed (no password hash)', async () => {
     const cu = makeClientUser({ passwordHash: undefined } as Partial<ClientUser>);
-    mockClientUserRepo.findOne.mockResolvedValue(cu);
+    mockClientUserRepo.find.mockResolvedValue([cu]);
 
     await expect(service.login({ email: RAW_EMAIL, password: 'any' })).rejects.toThrow(
       UnauthorizedException,

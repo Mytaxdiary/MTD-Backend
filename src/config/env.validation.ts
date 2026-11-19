@@ -66,9 +66,43 @@ export const envValidationSchema = Joi.object({
   REFRESH_TOKEN_SECRET: Joi.string().min(16).required(),
   REFRESH_TOKEN_EXPIRES_IN: Joi.string().default('7d'),
 
-  // Stripe (optional in local/test — Checkout/Portal need these set)
-  STRIPE_SECRET_KEY: Joi.string().allow('').optional(),
-  STRIPE_WEBHOOK_SECRET: Joi.string().allow('').optional(),
-  STRIPE_PRICE_BASE_ID: Joi.string().allow('').optional(),
-  STRIPE_PRICE_EXTRA_ID: Joi.string().allow('').optional(),
+  // Billing / Stripe — required whenever billing is on (local + production).
+  // Opt out only with BILLING_ENABLED=false. NODE_ENV=test keeps keys optional for CI.
+  BILLING_ENABLED: Joi.string().valid('true', 'false').default('true'),
+  STRIPE_SECRET_KEY: Joi.when('BILLING_ENABLED', {
+    is: 'false',
+    then: Joi.string().allow('').optional(),
+    otherwise: Joi.when('NODE_ENV', {
+      is: 'test',
+      then: Joi.string().allow('').optional(),
+      otherwise: Joi.string().trim().min(1).required(),
+    }),
+  }),
+  STRIPE_WEBHOOK_SECRET: Joi.when('BILLING_ENABLED', {
+    is: 'false',
+    then: Joi.string().allow('').optional(),
+    otherwise: Joi.when('NODE_ENV', {
+      is: 'test',
+      then: Joi.string().allow('').optional(),
+      otherwise: Joi.string().trim().min(1).required(),
+    }),
+  }),
+  STRIPE_PRICE_BASE_ID: Joi.when('BILLING_ENABLED', {
+    is: 'false',
+    then: Joi.string().allow('').optional(),
+    otherwise: Joi.when('NODE_ENV', {
+      is: 'test',
+      then: Joi.string().allow('').optional(),
+      otherwise: Joi.string().trim().min(1).required(),
+    }),
+  }),
+  STRIPE_PRICE_EXTRA_ID: Joi.when('BILLING_ENABLED', {
+    is: 'false',
+    then: Joi.string().allow('').optional(),
+    otherwise: Joi.when('NODE_ENV', {
+      is: 'test',
+      then: Joi.string().allow('').optional(),
+      otherwise: Joi.string().trim().min(1).required(),
+    }),
+  }),
 });

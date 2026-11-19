@@ -44,6 +44,7 @@ describe('ChaseLogsService — business/period-scoped chase', () => {
   });
 
   it('create persists business + period fields', async () => {
+    mockClientRepo.findOne.mockResolvedValue({ id: clientId, tenantId });
     const saved = await service.create(tenantId, {
       clientId,
       businessId: 'biz-a',
@@ -57,6 +58,9 @@ describe('ChaseLogsService — business/period-scoped chase', () => {
       body: 'Please file',
     });
 
+    expect(mockClientRepo.findOne).toHaveBeenCalledWith({
+      where: { tenantId, id: clientId },
+    });
     expect(mockRepo.create).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId,
@@ -69,6 +73,19 @@ describe('ChaseLogsService — business/period-scoped chase', () => {
       }),
     );
     expect(saved.periodStartDate).toBe('2025-04-06');
+  });
+
+  it('create rejects clients outside the tenant', async () => {
+    mockClientRepo.findOne.mockResolvedValue(null);
+    await expect(
+      service.create(tenantId, {
+        clientId: 'other-firm-client',
+        channel: 'email',
+        subject: 'Hi',
+        body: 'Please file',
+      }),
+    ).rejects.toThrow(/Client not found/);
+    expect(mockRepo.save).not.toHaveBeenCalled();
   });
 
   it('summaryForPeriods: chasing Q1 leaves Q2 unchanged', async () => {

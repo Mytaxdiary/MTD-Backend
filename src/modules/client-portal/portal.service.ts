@@ -115,8 +115,11 @@ export class PortalService {
     clientName: string,
     actingUserId?: string,
   ): Promise<void> {
-    // Upsert — avoid duplicate if already exists (e.g. re-invite)
-    let cu = await this.clientUserRepo.findOne({ where: { clientId } });
+    const client = await this.clientRepo.findOne({ where: { id: clientId, tenantId } });
+    if (!client) throw new NotFoundException('Client not found');
+
+    // Upsert — scoped to this firm (never reuse another tenant's ClientUser by clientId alone)
+    let cu = await this.clientUserRepo.findOne({ where: { clientId, tenantId } });
     const frontendUrl =
       this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
     const tenant = await this.tenantRepo.findOne({ where: { id: tenantId } });
@@ -194,12 +197,19 @@ export class PortalService {
     requiresMfa?: boolean;
     mfaToken?: string;
   }> {
-    // Hash the incoming email to look up the single matching row directly —
-    // no full-table scan needed even though the email column is encrypted.
+    // Hash the incoming email to look up matching portal users.
+    // Same email can exist in two firms — refuse ambiguous login instead of picking the wrong firm.
     const digest = hashEmail(dto.email, this.emailHashSecret());
-    const cu = await this.clientUserRepo.findOne({
+    const matches = await this.clientUserRepo.find({
       where: { emailHash: digest, isActive: true },
+      take: 2,
     });
+    if (matches.length > 1) {
+      throw new UnauthorizedException(
+        'Multiple portal accounts found for this email. Please contact your accountant.',
+      );
+    }
+    const cu = matches[0];
 
     if (!cu || !cu.passwordHash) {
       throw new UnauthorizedException('Invalid email or password');
@@ -208,8 +218,11 @@ export class PortalService {
     const valid = await comparePassword(dto.password, cu.passwordHash);
     if (!valid) throw new UnauthorizedException('Invalid email or password');
 
-    const client = await this.clientRepo.findOne({ where: { id: cu.clientId } });
-    const name = client?.name ?? '';
+    const client = await this.clientRepo.findOne({
+      where: { id: cu.clientId, tenantId: cu.tenantId },
+    });
+    if (!client) throw new UnauthorizedException('Invalid email or password');
+    const name = client.name ?? '';
 
     if (cu.mfaEnabled && cu.totpSecret) {
       const mfaToken = this.jwtService.sign(

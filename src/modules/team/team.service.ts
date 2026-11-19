@@ -61,8 +61,6 @@ export class TeamService {
     private readonly userRepo: Repository<User>,
     @InjectRepository(Tenant)
     private readonly tenantRepo: Repository<Tenant>,
-    @InjectRepository(Client)
-    private readonly clientRepo: Repository<Client>,
     private readonly usersService: UsersService,
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
@@ -264,24 +262,23 @@ export class TeamService {
       throw new ForbiddenException('The firm owner cannot be removed.');
     }
 
-    await this.unassignClientsOfUser(user.id);
-    await this.userRepo.manager.query(
-      'UPDATE chase_logs SET sent_by_user_id = NULL WHERE sent_by_user_id = ?',
-      [user.id],
-    );
-    await this.userRepo.manager.query('DELETE FROM email_connections WHERE user_id = ?', [user.id]);
-    await this.userRepo.delete(user.id);
-  }
+    // Unassign first at the data layer so clients reappear for the owner (not FE-only).
+    await this.userRepo.manager.transaction(async (manager) => {
+      await manager
+        .createQueryBuilder()
+        .update(Client)
+        .set({ assignedToUserId: null })
+        .where('assigned_to_user_id = :userId', { userId: user.id })
+        .andWhere('tenant_id = :tenantId', { tenantId: actor.tenantId })
+        .execute();
 
-  private async unassignClientsOfUser(userId: string): Promise<void> {
-    const col = this.clientRepo.metadata.findColumnWithPropertyName('assignedToUserId');
-    if (!col) return;
-    await this.clientRepo
-      .createQueryBuilder()
-      .update(Client)
-      .set({ [col.propertyName]: null })
-      .where(`${col.databaseName} = :userId`, { userId })
-      .execute();
+      await manager.query(
+        'UPDATE chase_logs SET sent_by_user_id = NULL WHERE sent_by_user_id = ?',
+        [user.id],
+      );
+      await manager.query('DELETE FROM email_connections WHERE user_id = ?', [user.id]);
+      await manager.delete(User, { id: user.id, tenantId: actor.tenantId });
+    });
   }
 
   private async requireTenantUser(tenantId: string, userId: string): Promise<User> {

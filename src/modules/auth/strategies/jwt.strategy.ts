@@ -116,10 +116,31 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const permissions =
       role === 'admin' ? EMPTY_PERMISSIONS : normalizePermissions(user.permissions, role);
 
+    // Always bind tenant from DB — never trust a forged/stale JWT claim for firm users.
+    if (role === 'admin') {
+      return {
+        userId: user.id,
+        email: user.email,
+        tenantId: '',
+        loginAt: payload.iat,
+        mfaAuthenticated: payload.mfaAuthenticated ?? false,
+        role,
+        audience,
+        permissions,
+      };
+    }
+
+    if (!user.tenantId) {
+      throw new UnauthorizedException('User is not linked to a firm');
+    }
+    if (payload.tenantId && payload.tenantId !== user.tenantId) {
+      throw new UnauthorizedException('Invalid token tenant');
+    }
+
     return {
-      userId: payload.sub,
-      email: payload.email,
-      tenantId: payload.tenantId,
+      userId: user.id,
+      email: user.email,
+      tenantId: user.tenantId,
       loginAt: payload.iat,
       mfaAuthenticated: payload.mfaAuthenticated ?? false,
       role,

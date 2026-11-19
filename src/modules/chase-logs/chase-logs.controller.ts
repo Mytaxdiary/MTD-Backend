@@ -20,6 +20,7 @@ import { CreateChaseLogDto } from './dto/create-chase-log.dto';
 interface RequestUser {
   userId: string;
   tenantId: string;
+  role?: string;
 }
 
 @ApiTags('chase-logs')
@@ -38,17 +39,23 @@ export class ChaseLogsController {
     return (req.user as RequestUser).userId;
   }
 
+  private actor(req: ExpressRequest): RequestUser {
+    return req.user as RequestUser;
+  }
+
   @Post()
   @ApiOperation({ summary: 'Record a chase sent to a client' })
   create(@Request() req: ExpressRequest, @Body() dto: CreateChaseLogDto) {
-    return this.service.create(this.tid(req), dto, this.uid(req));
+    const actor = this.actor(req);
+    return this.service.create(actor.tenantId, dto, actor.userId, actor);
   }
 
   @Get()
   @ApiOperation({ summary: 'List chase logs for a client' })
   @ApiQuery({ name: 'clientId', required: true })
   listByClient(@Request() req: ExpressRequest, @Query('clientId') clientId: string) {
-    return this.service.listByClient(this.tid(req), clientId);
+    const actor = this.actor(req);
+    return this.service.listByClient(actor.tenantId, clientId, actor);
   }
 
   @Patch(':id/status')

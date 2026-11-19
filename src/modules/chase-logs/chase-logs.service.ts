@@ -6,6 +6,7 @@ import { CreateChaseLogDto } from './dto/create-chase-log.dto';
 import { Client } from '../clients/entities/client.entity';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { MailService } from '../mail/mail.service';
+import { staffClientWhere } from '../clients/staff-client-scope.util';
 
 export type ChaseLogSummary = {
   clientId: string;
@@ -63,7 +64,18 @@ export class ChaseLogsService {
    * Create a chase log entry and send the email (channel = email) or log SMS stub.
    * Status is per business×period via businessId + periodStartDate.
    */
-  async create(tenantId: string, dto: CreateChaseLogDto, actingUserId?: string): Promise<ChaseLog> {
+  async create(
+    tenantId: string,
+    dto: CreateChaseLogDto,
+    actingUserId?: string,
+    actor?: { role?: string; userId?: string } | null,
+  ): Promise<ChaseLog> {
+    // Firm isolation (+ staff assignment): never create a chase for another firm's client.
+    const client = await this.clientRepo.findOne({
+      where: staffClientWhere(tenantId, actor, { id: dto.clientId }),
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
     const log = this.repo.create({
       clientId: dto.clientId,
       businessId: dto.businessId?.trim() || null,
@@ -123,7 +135,16 @@ export class ChaseLogsService {
     }
   }
 
-  async listByClient(tenantId: string, clientId: string): Promise<ChaseLog[]> {
+  async listByClient(
+    tenantId: string,
+    clientId: string,
+    actor?: { role?: string; userId?: string } | null,
+  ): Promise<ChaseLog[]> {
+    const client = await this.clientRepo.findOne({
+      where: staffClientWhere(tenantId, actor, { id: clientId }),
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
     return this.repo.find({
       where: { tenantId, clientId, deletedAt: IsNull() },
       order: { sentAt: 'DESC' },

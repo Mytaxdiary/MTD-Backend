@@ -6,6 +6,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Request } from 'express';
 import { ClientUser } from '../entities/client-user.entity';
+import { Client } from '../../clients/entities/client.entity';
 import { requirePortalJwtSecret } from '../../../config/require-jwt-secret';
 
 export const PORTAL_JWT_STRATEGY = 'portal-jwt';
@@ -35,6 +36,8 @@ export class PortalJwtStrategy extends PassportStrategy(Strategy, PORTAL_JWT_STR
     configService: ConfigService,
     @InjectRepository(ClientUser)
     private readonly clientUserRepo: Repository<ClientUser>,
+    @InjectRepository(Client)
+    private readonly clientRepo: Repository<Client>,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
@@ -50,14 +53,21 @@ export class PortalJwtStrategy extends PassportStrategy(Strategy, PORTAL_JWT_STR
   async validate(payload: PortalJwtPayload): Promise<PortalRequestUser> {
     if (payload.role !== 'client') throw new UnauthorizedException();
 
-    // Agent preview — no ClientUser lookup needed
+    // Agent preview — bind to a real client row for this firm (do not trust claims alone).
     if (payload.isPreview) {
+      if (!payload.clientId || !payload.tenantId) {
+        throw new UnauthorizedException('Invalid preview token');
+      }
+      const client = await this.clientRepo.findOne({
+        where: { id: payload.clientId, tenantId: payload.tenantId },
+      });
+      if (!client) throw new UnauthorizedException('Preview client not found');
       return {
         clientUserId: 'preview',
-        clientId: payload.clientId,
-        tenantId: payload.tenantId,
+        clientId: client.id,
+        tenantId: client.tenantId,
         isPreview: true,
-        email: `preview+${payload.clientId}@mytaxdiary.local`,
+        email: `preview+${client.id}@mytaxdiary.local`,
       };
     }
 
@@ -65,10 +75,13 @@ export class PortalJwtStrategy extends PassportStrategy(Strategy, PORTAL_JWT_STR
       where: { id: payload.sub, isActive: true },
     });
     if (!cu) throw new UnauthorizedException('Portal account not found or inactive');
+    if (payload.clientId !== cu.clientId || payload.tenantId !== cu.tenantId) {
+      throw new UnauthorizedException('Invalid portal token claims');
+    }
     return {
-      clientUserId: payload.sub,
-      clientId: payload.clientId,
-      tenantId: payload.tenantId,
+      clientUserId: cu.id,
+      clientId: cu.clientId,
+      tenantId: cu.tenantId,
       isPreview: false,
       email: cu.email,
     };

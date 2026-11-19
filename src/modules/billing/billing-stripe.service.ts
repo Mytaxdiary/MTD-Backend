@@ -14,6 +14,8 @@ import { Tenant } from '../tenants/entities/tenant.entity';
 import { User } from '../users/entities/user.entity';
 import { BILLING_INCLUDED_CLIENTS } from './billing.constants';
 import { BillingService } from './billing.service';
+import { StripeWebhookEvent } from './entities/stripe-webhook-event.entity';
+import { isDuplicateKeyError } from './stripe-webhook-idempotency.util';
 import { StripeService } from './stripe.service';
 
 @Injectable()
@@ -25,6 +27,8 @@ export class BillingStripeService {
     private readonly tenantRepo: Repository<Tenant>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(StripeWebhookEvent)
+    private readonly webhookEventRepo: Repository<StripeWebhookEvent>,
     private readonly stripeService: StripeService,
     private readonly billingService: BillingService,
     private readonly config: ConfigService,
@@ -149,6 +153,12 @@ export class BillingStripeService {
       throw new BadRequestException('Invalid Stripe webhook signature');
     }
 
+    const claimed = await this.claimWebhookEvent(event.id, event.type);
+    if (!claimed) {
+      this.logger.log(`Duplicate Stripe event ${event.id} (${event.type}) — skipping`);
+      return { received: true };
+    }
+
     try {
       switch (event.type) {
         case 'checkout.session.completed':
@@ -168,11 +178,32 @@ export class BillingStripeService {
           this.logger.debug(`Ignoring Stripe event ${event.type}`);
       }
     } catch (err) {
+      await this.releaseWebhookEvent(event.id);
       this.logger.error(`Webhook handler error for ${event.type}: ${String(err)}`);
       throw err;
     }
 
     return { received: true };
+  }
+
+  /** Insert event.id; false if already processed (idempotent skip). */
+  private async claimWebhookEvent(eventId: string, eventType: string): Promise<boolean> {
+    try {
+      await this.webhookEventRepo.insert({ eventId, eventType });
+      return true;
+    } catch (err) {
+      if (isDuplicateKeyError(err)) return false;
+      throw err;
+    }
+  }
+
+  /** Allow Stripe to retry after a failed handler. */
+  private async releaseWebhookEvent(eventId: string): Promise<void> {
+    try {
+      await this.webhookEventRepo.delete({ eventId });
+    } catch (err) {
+      this.logger.warn(`Could not release webhook event ${eventId}: ${String(err)}`);
+    }
   }
 
   private async findTenantForStripe(opts: {
